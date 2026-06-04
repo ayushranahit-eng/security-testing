@@ -1,0 +1,754 @@
+"""
+Scan engine — async, uses async_playwright.
+
+Why async_playwright instead of sync_playwright:
+  sync_playwright internally calls asyncio.create_subprocess_exec() to launch
+  Chromium. On Windows, this only works from the main thread's event loop.
+  When called from a FastAPI worker thread (run_in_executor) it raises
+  NotImplementedError regardless of which event loop type is installed.
+
+  async_playwright runs natively inside the existing asyncio event loop that
+  FastAPI/uvicorn owns. No threads needed. No subprocess-from-thread issue.
+
+All scanner sub-modules (crawler, interaction, headers, cookies, ssl_check)
+remain synchronous — they are called directly since this engine owns the
+async/await boundary.  Playwright async objects (page, browser, response)
+accept both awaitable and direct calls; we await only what is necessary.
+"""
+
+import hashlib
+from datetime import datetime
+from playwright.async_api import async_playwright
+
+from scanner.crawler     import (
+    normalise_url, is_internal,
+)
+from scanner.headers     import check_headers
+from scanner.cookies     import analyse_cookies
+from scanner.ssl_check   import check_ssl, evaluate_ssl
+
+
+def _emit_progress(progress, current_step: str, **metrics) -> None:
+    if progress is None:
+        return
+
+    try:
+        progress({"current_step": current_step, **metrics})
+    except Exception:
+        pass
+
+
+def _emit_event(progress, level: str, phase: str, message: str, **data) -> None:
+    if progress is None:
+        return
+
+    try:
+        progress({
+            "event": {
+                "level": level,
+                "phase": phase,
+                "message": message,
+                **data,
+            }
+        })
+    except Exception:
+        pass
+
+
+# ── Async element collector (mirrors sync version in crawler.py) ───
+
+async def _collect_elements_async(page, url: str, results: dict, progress=None) -> set:
+    """Async version of collect_elements — iterates async locators."""
+
+    # FORMS
+    try:
+        forms = await page.locator("form").all()
+        for idx, form in enumerate(forms):
+            try:
+                entry = {
+                    "page":    url,
+                    "form_no": idx + 1,
+                    "action":  await form.get_attribute("action"),
+                    "method":  await form.get_attribute("method"),
+                    "id":      await form.get_attribute("id"),
+                }
+                if entry not in results["forms"]:
+                    results["forms"].append(entry)
+                    _emit_event(
+                        progress,
+                        "info",
+                        "discovery",
+                        "Form discovered",
+                        url=url,
+                        form_no=entry["form_no"],
+                        action=entry["action"],
+                        method=entry["method"],
+                        element_id=entry["id"],
+                    )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # INPUTS
+    try:
+        inputs = await page.locator("input").all()
+        for inp in inputs:
+            try:
+                entry = {
+                    "page":        url,
+                    "id":          await inp.get_attribute("id"),
+                    "name":        await inp.get_attribute("name"),
+                    "type":        (await inp.get_attribute("type")) or "text",
+                    "placeholder": await inp.get_attribute("placeholder"),
+                    "required":    (await inp.get_attribute("required")) is not None,
+                }
+                if entry not in results["inputs"]:
+                    results["inputs"].append(entry)
+                    _emit_event(
+                        progress,
+                        "info",
+                        "discovery",
+                        "Input discovered",
+                        url=url,
+                        input_type=entry["type"],
+                        name=entry["name"],
+                        element_id=entry["id"],
+                        required=entry["required"],
+                    )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # TEXTAREAS
+    try:
+        textareas = await page.locator("textarea").all()
+        for ta in textareas:
+            try:
+                entry = {
+                    "page":        url,
+                    "id":          await ta.get_attribute("id"),
+                    "name":        await ta.get_attribute("name"),
+                    "type":        "textarea",
+                    "placeholder": await ta.get_attribute("placeholder"),
+                    "required":    (await ta.get_attribute("required")) is not None,
+                }
+                if entry not in results["inputs"]:
+                    results["inputs"].append(entry)
+                    _emit_event(
+                        progress,
+                        "info",
+                        "discovery",
+                        "Textarea discovered",
+                        url=url,
+                        name=entry["name"],
+                        element_id=entry["id"],
+                        required=entry["required"],
+                    )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # BUTTONS
+    try:
+        btns = await page.locator("button").all()
+        for btn in btns:
+            try:
+                text = " ".join((await btn.inner_text()).split())
+                if text and text not in results["buttons"]:
+                    results["buttons"].append(text)
+                    _emit_event(
+                        progress,
+                        "info",
+                        "discovery",
+                        "Button discovered",
+                        url=url,
+                        button=text,
+                    )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # LINKS
+    found = set()
+    try:
+        links = await page.locator("a").all()
+        for link in links:
+            try:
+                href = await link.get_attribute("href")
+                if not href:
+                    continue
+                from urllib.parse import urljoin
+                full = normalise_url(urljoin(url, href))
+                if is_internal(url, full):
+                    found.add(full)
+                    _emit_event(
+                        progress,
+                        "info",
+                        "discovery",
+                        "Internal link discovered",
+                        source_url=url,
+                        discovered_url=full,
+                    )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return found
+
+
+async def _page_state_hash_async(page) -> str | None:
+    """
+    MD5 of current URL + visible input IDs + button texts.
+    Used to detect identical UI states and prevent interaction loops.
+    """
+    try:
+        parts = [page.url]
+
+        visible_fields = await page.locator(
+            "input:visible, textarea:visible, select:visible"
+        ).all()
+        for el in visible_fields:
+            try:
+                parts.append(
+                    (await el.get_attribute("id"))
+                    or (await el.get_attribute("name"))
+                    or ""
+                )
+            except Exception:
+                pass
+
+        buttons = await page.locator("button").all()
+        for btn in buttons:
+            try:
+                parts.append(" ".join((await btn.inner_text()).split())[:60])
+            except Exception:
+                pass
+
+        return hashlib.md5("|".join(parts).encode()).hexdigest()
+    except Exception:
+        return None
+
+
+# ── Async interaction engine ───────────────────────────────────────
+
+SCORE_ALL_JS = """
+() => {
+    const hardSkip = ['delete','remove','logout','log out','sign out',
+                      'purchase','pay','checkout','buy','deactivate',
+                      'unsubscribe','wipe','destroy','terminate'];
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    return buttons.map((btn, idx) => {
+        const text = (btn.innerText||'').replace(/\\s+/g,' ').trim().toLowerCase();
+        for (const w of hardSkip) {
+            if (text.includes(w)) return { idx, text, score: -999 };
+        }
+        let score = 0;
+        if (btn.closest('form'))   score += 30;
+        if ((btn.getAttribute('type')||'').toLowerCase()==='submit') score += 20;
+        const cls = (btn.className||'').toLowerCase();
+        if (cls.includes('primary')||cls.includes('submit')||cls.includes('solid')||
+            cls.includes('cta')    ||cls.includes('main')  ||cls.includes('action')) score += 15;
+        if (btn.closest('header')||btn.closest('nav')||btn.closest('footer')) score -= 50;
+        const rect = btn.getBoundingClientRect();
+        if (vh > 0) {
+            const relY = rect.top / vh;
+            if (relY > 0.6)  score += 10;
+            if (relY < 0.15) score -= 20;
+        }
+        const c = btn.closest('section,article,main,form,[class*="card"],[class*="panel"],[class*="wrap"],[class*="container"]');
+        if (c && c.querySelectorAll('input:not([type=hidden]),textarea,select').length > 0) score += 10;
+        return { idx, text, score };
+    });
+}
+"""
+
+ELEM_TO = 3_000
+
+
+async def _interact_async(page, url: str, results: dict,
+                           api_calls: set, visited_pages: set,
+                           visited_states: set, cfg: dict,
+                           progress=None) -> set:
+    """Async form interaction engine."""
+
+    print(f"\n   🤖 Interacting with form elements on: {url}")
+
+    _emit_event(progress, "info", "interaction", "Interacting with page", url=url)
+
+    import tempfile, os
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8")
+    tmp.write("security_test_sample_upload")
+    tmp.close()
+    sample_file = tmp.name
+
+    new_urls      = set()
+    reported_apis = set(api_calls)
+    radio_done    = set()
+
+    def flush_apis(label=""):
+        nonlocal reported_apis
+        for call in sorted(api_calls - reported_apis):
+            tag = f" [{label}]" if label else ""
+            print(f"      📡 New API discovered{tag}: {call}")
+        for call in sorted(api_calls - reported_apis):
+            _emit_event(
+                progress,
+                "info",
+                "api",
+                "API request discovered",
+                url=call,
+                context=label or None,
+            )
+        reported_apis = set(api_calls)
+
+    async def snapshot():
+        new   = await _collect_elements_async(page, page.url, results, progress)
+        fresh = new - visited_pages
+        new_urls.update(fresh)
+        for u in fresh:
+            _emit_event(
+                progress,
+                "info",
+                "crawl",
+                "New page discovered",
+                url=u,
+                source_url=page.url,
+            )
+            print(f"      🔗 New page discovered: {u}")
+
+    tv = cfg["test_values"]
+
+    # ── Inputs ────────────────────────────────────────────────────
+    try:
+        all_inputs = await page.locator("input").all()
+    except Exception:
+        all_inputs = []
+
+    for inp in all_inputs:
+        try:
+            itype = ((await inp.get_attribute("type")) or "text").lower()
+            iid   = ((await inp.get_attribute("id")) or
+                     (await inp.get_attribute("name")) or
+                     (await inp.get_attribute("placeholder")) or itype)
+
+            if itype == "checkbox":
+                try:
+                    await page.evaluate("el => el.click()", await inp.element_handle())
+                    _emit_event(progress, "info", "interaction", "Checkbox clicked", url=url, field=iid)
+                    print(f"      ☑️  Clicked checkbox '{iid}'")
+                except Exception as e:
+                    _emit_event(progress, "warning", "interaction", "Checkbox skipped", url=url, field=iid, error=str(e))
+                    print(f"      ⚠️  Checkbox '{iid}' skipped: {e}")
+
+            elif itype == "radio":
+                group = (await inp.get_attribute("name")) or iid
+                if group not in radio_done:
+                    try:
+                        await page.evaluate("el => el.click()", await inp.element_handle())
+                        radio_done.add(group)
+                        _emit_event(progress, "info", "interaction", "Radio selected", url=url, field=iid, group=group)
+                        print(f"      🔘 Radio '{iid}' (group '{group}')")
+                    except Exception as e:
+                        _emit_event(progress, "warning", "interaction", "Radio skipped", url=url, field=iid, group=group, error=str(e))
+                        print(f"      ⚠️  Radio '{iid}' skipped: {e}")
+
+            elif itype == "file":
+                try:
+                    await inp.set_input_files(sample_file, timeout=ELEM_TO)
+                    _emit_event(progress, "info", "interaction", "File uploaded", url=url, field=iid)
+                    print(f"      📎 Uploaded file to '{iid}'")
+                except Exception as e:
+                    _emit_event(progress, "warning", "interaction", "File input skipped", url=url, field=iid, error=str(e))
+                    print(f"      ⚠️  File '{iid}' skipped: {e}")
+
+            elif itype in ("hidden","button","submit","reset","image"):
+                pass
+
+            else:
+                val = tv.get(itype) or tv.get("text", "test")
+                try:
+                    await inp.fill(str(val), timeout=ELEM_TO)
+                    _emit_event(
+                        progress,
+                        "info",
+                        "interaction",
+                        "Input filled",
+                        url=url,
+                        field=iid,
+                        input_type=itype,
+                        value=str(val),
+                    )
+                    print(f"      ✍️  Filled [{itype}] '{iid}' → '{val}'")
+                except Exception as e:
+                    _emit_event(progress, "warning", "interaction", "Input skipped", url=url, field=iid, input_type=itype, error=str(e))
+                    print(f"      ⚠️  Input '{iid}' skipped: {e}")
+
+        except Exception as e:
+            print(f"      ⚠️  Input error: {e}")
+
+    # ── Textareas ─────────────────────────────────────────────────
+    try:
+        for ta in await page.locator("textarea").all():
+            try:
+                ta_id = ((await ta.get_attribute("id")) or
+                         (await ta.get_attribute("name")) or "textarea")
+                val = tv.get("textarea", "Test content")
+                await ta.scroll_into_view_if_needed(timeout=ELEM_TO)
+                await ta.fill(val, timeout=ELEM_TO)
+                _emit_event(progress, "info", "interaction", "Textarea filled", url=url, field=ta_id, value=val)
+                print(f"      ✍️  Filled [textarea] '{ta_id}' → '{val}'")
+            except Exception as e:
+                print(f"      ⚠️  Textarea skipped: {e}")
+    except Exception:
+        pass
+
+    # ── Native selects ────────────────────────────────────────────
+    try:
+        for sel in await page.locator("select").all():
+            try:
+                sel_id = ((await sel.get_attribute("id")) or
+                          (await sel.get_attribute("name")) or "select")
+                chosen = None
+                for opt in await sel.locator("option").all():
+                    v = ((await opt.get_attribute("value")) or "").strip()
+                    if v:
+                        chosen = v
+                        break
+                if chosen:
+                    await sel.select_option(chosen, timeout=ELEM_TO)
+                    _emit_event(progress, "info", "interaction", "Select option chosen", url=url, field=sel_id, value=chosen)
+                    print(f"      📋 Select '{sel_id}' → '{chosen}'")
+            except Exception as e:
+                print(f"      ⚠️  Select skipped: {e}")
+    except Exception:
+        pass
+
+    await page.wait_for_timeout(cfg["interaction_wait"])
+    flush_apis("after fill")
+    await snapshot()
+
+    # ── Buttons ───────────────────────────────────────────────────
+    try:
+        button_scores = await page.evaluate(SCORE_ALL_JS)
+    except Exception as e:
+        print(f"      ⚠️  Button scoring failed: {e}")
+        button_scores = []
+
+    button_scores.sort(key=lambda x: x.get("score", -999), reverse=True)
+
+    try:
+        all_btns = await page.locator("button").all()
+    except Exception:
+        all_btns = []
+
+    _emit_event(progress, "info", "interaction", "Buttons found on page", url=url, count=len(all_btns))
+
+    print(f"      🔎 Found {len(all_btns)} button(s) on page")
+
+    for item in button_scores:
+        idx      = item.get("idx", -1)
+        score    = item.get("score", 0)
+        raw_text = " ".join((item.get("text") or "").split())
+
+        if not raw_text:
+            continue
+        if score <= -999:
+            _emit_event(progress, "warning", "interaction", "Skipping destructive button", url=url, button=raw_text, score=score)
+            print(f"      🚫 Skipping destructive button: '{raw_text}'")
+            continue
+        if idx < 0 or idx >= len(all_btns):
+            continue
+
+        btn = all_btns[idx]
+        try:
+            api_before   = set(api_calls)
+            state_before = await _page_state_hash_async(page)
+
+            print(f"      🖱️  Clicking button: '{raw_text}' (score={score})")
+
+            _emit_event(progress, "info", "interaction", "Clicking button", url=url, button=raw_text, score=score)
+
+            clicked = False
+            try:
+                await btn.scroll_into_view_if_needed(timeout=3_000)
+                await btn.click(timeout=5_000)
+                clicked = True
+                _emit_event(progress, "info", "interaction", "Button clicked", url=url, button=raw_text)
+            except Exception as e1:
+                print(f"         ⚠️  Normal click failed: {e1}")
+                try:
+                    await btn.click(force=True, timeout=5_000)
+                    clicked = True
+                    _emit_event(progress, "info", "interaction", "Force button click succeeded", url=url, button=raw_text)
+                    print(f"         ✅ Force click succeeded")
+                except Exception as e2:
+                    print(f"         ❌ Force click failed: {e2}")
+
+            if not clicked:
+                continue
+
+            try:
+                await page.wait_for_load_state("networkidle",
+                                               timeout=cfg["network_idle_wait"])
+            except Exception:
+                pass
+            await page.wait_for_timeout(cfg["post_click_wait"])
+
+            new_calls = api_calls - api_before
+            for call in sorted(new_calls):
+                _emit_event(progress, "info", "api", "API request discovered after button click", url=call, button=raw_text)
+                print(f"      📡 New API [after '{raw_text}']: {call}")
+            reported_apis = set(api_calls)
+
+            state_after = await _page_state_hash_async(page)
+
+            if state_after and state_after == state_before:
+                print(f"      ℹ️  No state change after '{raw_text}'")
+                if page.url.rstrip("/") != url.rstrip("/"):
+                    await page.goto(url, wait_until="networkidle",
+                                    timeout=cfg["page_timeout"])
+                continue
+
+            if state_after and state_after in visited_states:
+                print(f"      ♻️  State already explored, going back")
+                await page.goto(url, wait_until="networkidle",
+                                timeout=cfg["page_timeout"])
+                continue
+
+            if state_after:
+                visited_states.add(state_after)
+
+            await snapshot()
+
+            if page.url.rstrip("/") != url.rstrip("/"):
+                print(f"      ↩️  Left page, returning to {url}")
+                await page.goto(url, wait_until="networkidle",
+                                timeout=cfg["page_timeout"])
+                await page.wait_for_timeout(1_000)
+                try:
+                    button_scores = await page.evaluate(SCORE_ALL_JS)
+                    all_btns = await page.locator("button").all()
+                    button_scores.sort(key=lambda x: x.get("score", -999), reverse=True)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print(f"      ❌ Button '{raw_text}' error: {e}")
+
+    try:
+        os.unlink(sample_file)
+    except Exception:
+        pass
+
+    return new_urls
+
+
+# ── Main async scan entry point ────────────────────────────────────
+
+async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
+    """
+    Full async scan pipeline.
+    Called directly from FastAPI async endpoint — no threads needed.
+    """
+
+    start_url  = normalise_url(target_url)
+    max_pages  = cfg.get("max_pages", 20)
+    max_depth  = cfg.get("max_depth", 2)
+    scan_time  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    api_calls      = set()
+    visited_pages  = set()
+    visited_states = set()
+    pending_pages  = {(start_url, 0)}
+
+    results = {
+        "target":           start_url,
+        "scan_time":        scan_time,
+        "pages":            [],
+        "forms":            [],
+        "inputs":           [],
+        "buttons":          [],
+        "api_calls":        [],
+        "security_headers": {},
+        "cookies":          [],
+        "ssl":              {},
+        "findings":         [],
+    }
+
+    def publish(current_step: str, **extra) -> None:
+        _emit_progress(
+            progress,
+            current_step,
+            pages_found=len(visited_pages),
+            forms_found=len(results["forms"]),
+            inputs_found=len(results["inputs"]),
+            buttons_found=len(results["buttons"]),
+            api_calls_found=len(api_calls),
+            findings_found=len(results["findings"]),
+            pending_pages=len(pending_pages),
+            **extra,
+        )
+        _emit_event(progress, "info", "scan", current_step, **extra)
+
+    print("\n" + "=" * 60)
+    print("🛡️  SECURITY TESTING STARTED")
+    print("=" * 60)
+    print(f"🌐 Target: {start_url}")
+    print()
+
+    publish("Starting scan")
+
+    async with async_playwright() as p:
+
+        publish("Launching browser")
+        browser = await p.chromium.launch(
+            headless=cfg.get("headless", True),
+            slow_mo=cfg.get("slow_mo", 0),
+        )
+        context = await browser.new_context()
+        page    = await context.new_page()
+
+        def track_request(req):
+            if req.url not in api_calls:
+                _emit_event(
+                    progress,
+                    "info",
+                    "network",
+                    "Request finished",
+                    url=req.url,
+                    method=req.method,
+                    resource_type=req.resource_type,
+                )
+            api_calls.add(req.url)
+
+        page.on("requestfinished", track_request)
+
+        # ── Initial load ───────────────────────────────────────────
+        print("🔍 Crawling website...")
+        publish("Loading target page")
+        try:
+            response = await page.goto(
+                start_url,
+                wait_until="networkidle",
+                timeout=cfg["page_timeout"],
+            )
+        except Exception as e:
+            print(f"❌ Failed to load target URL: {e}")
+            await browser.close()
+            return results
+
+        if response is None:
+            print("❌ No response. Aborting.")
+            await browser.close()
+            return results
+
+        print("✅ Website loaded successfully")
+        visited_pages.add(start_url)
+        publish("Target page loaded")
+
+        init_state = await _page_state_hash_async(page)
+        if init_state:
+            visited_states.add(init_state)
+
+        # ── Security headers ───────────────────────────────────────
+        print("🔐 Checking Security Headers...")
+        publish("Checking security headers")
+        results["security_headers"] = check_headers(
+            dict(response.headers),
+            cfg["required_security_headers"],
+            results["findings"],
+        )
+        publish("Security headers checked")
+
+        # ── Cookies ───────────────────────────────────────────────
+        print("🍪 Analyzing Session Cookies...")
+        publish("Analyzing cookies")
+        results["cookies"] = analyse_cookies(
+            await context.cookies(), results["findings"]
+        )
+        publish("Cookies analyzed", cookies_found=len(results["cookies"]))
+
+        # ── Crawl + interact ───────────────────────────────────────
+        publish("Discovering page elements")
+        new_links = await _collect_elements_async(page, start_url, results, progress)
+        publish("Initial elements discovered")
+        for lnk in new_links - visited_pages:
+            pending_pages.add((lnk, 1))
+
+        publish("Interacting with target page")
+        inter_links = await _interact_async(
+            page, start_url, results, api_calls,
+            visited_pages, visited_states, cfg, progress
+        )
+        publish("Target page interaction complete")
+        for lnk in inter_links - visited_pages:
+            pending_pages.add((lnk, 1))
+
+        while pending_pages:
+            next_url, depth = pending_pages.pop()
+
+            if next_url in visited_pages:
+                continue
+            if max_pages > 0 and len(visited_pages) >= max_pages:
+                print(f"\n⚠️  Page limit ({max_pages}) reached — stopping crawl")
+                break
+            if max_depth > 0 and depth > max_depth:
+                continue
+
+            visited_pages.add(next_url)
+            publish("Visiting page", current_url=next_url, current_depth=depth)
+            print(f"\n🔗 Visiting (depth={depth}): {next_url}")
+
+            try:
+                resp = await page.goto(
+                    next_url,
+                    wait_until="networkidle",
+                    timeout=cfg["page_timeout"],
+                )
+            except Exception as e:
+                print(f"   ⚠️  Error loading {next_url}: {e}")
+                continue
+
+            if resp is None:
+                continue
+
+            more_links = await _collect_elements_async(page, next_url, results, progress)
+            publish("Page elements discovered", current_url=next_url, current_depth=depth)
+            for lnk in more_links - visited_pages:
+                pending_pages.add((lnk, depth + 1))
+
+            il = await _interact_async(
+                page, next_url, results, api_calls,
+                visited_pages, visited_states, cfg, progress
+            )
+            publish("Page interaction complete", current_url=next_url, current_depth=depth)
+            for lnk in il - visited_pages:
+                pending_pages.add((lnk, depth + 1))
+
+        # ── SSL (sync — no browser needed) ────────────────────────
+        print("\n🔒 Validating SSL Certificate...")
+        publish("Validating SSL certificate")
+        results["ssl"] = check_ssl(start_url)
+        evaluate_ssl(results["ssl"], results["findings"])
+        publish("SSL validation complete")
+
+        await browser.close()
+
+    results["pages"]     = sorted(visited_pages)
+    results["api_calls"] = sorted(api_calls)
+    publish("Scan complete")
+
+    print(f"\n🔗 Pages Discovered:  {len(results['pages'])}")
+    print(f"📝 Forms Discovered:  {len(results['forms'])}")
+    print(f"⌨️  Inputs Discovered: {len(results['inputs'])}")
+    print(f"🔘 Buttons Discovered:{len(results['buttons'])}")
+    print(f"📡 API Calls Captured:{len(results['api_calls'])}")
+    print(f"🚨 Findings:          {len(results['findings'])}")
+
+    return results
