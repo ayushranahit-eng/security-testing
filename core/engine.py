@@ -20,12 +20,12 @@ import hashlib
 from datetime import datetime
 from playwright.async_api import async_playwright
 
-from scanner.crawler     import (
-    normalise_url, is_internal,
-)
-from scanner.headers     import check_headers
-from scanner.cookies     import analyse_cookies
-from scanner.ssl_check   import check_ssl, evaluate_ssl
+from scanner.crawler                import normalise_url, is_internal
+from scanner.headers                import check_headers
+from scanner.cookies                import analyse_cookies
+from scanner.ssl_check              import check_ssl, evaluate_ssl
+from scanner.sensitive_path_prober  import probe_sensitive_paths
+from scanner.cors_security_analyzer import analyze_cors_security
 
 
 def _emit_progress(progress, current_step: str, **metrics) -> None:
@@ -568,17 +568,19 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
     pending_pages  = {(start_url, 0)}
 
     results = {
-        "target":           start_url,
-        "scan_time":        scan_time,
-        "pages":            [],
-        "forms":            [],
-        "inputs":           [],
-        "buttons":          [],
-        "api_calls":        [],
-        "security_headers": {},
-        "cookies":          [],
-        "ssl":              {},
-        "findings":         [],
+        "target":                    start_url,
+        "scan_time":                 scan_time,
+        "pages":                     [],
+        "forms":                     [],
+        "inputs":                    [],
+        "buttons":                   [],
+        "api_calls":                 [],
+        "security_headers":          {},
+        "cookies":                   [],
+        "ssl":                       {},
+        "sensitive_paths":           [],
+        "cors_analysis":             {},
+        "findings":                  [],
     }
 
     def publish(current_step: str, **extra) -> None:
@@ -738,17 +740,40 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         evaluate_ssl(results["ssl"], results["findings"])
         publish("SSL validation complete")
 
+        # ── Sensitive path probing (sync — urllib, no browser) ────
+        print("\n🗂️  Probing Sensitive Paths...")
+        publish("Probing sensitive paths")
+        results["sensitive_paths"] = probe_sensitive_paths(
+            start_url, results["findings"]
+        )
+        publish("Sensitive path probing complete",
+                sensitive_paths_found=len([
+                    p for p in results["sensitive_paths"]
+                    if p.get("severity") not in (None, "none", "Info")
+                ]))
+
+        # ── CORS security analysis (sync — urllib, no browser) ────
+        print("\n🌐 Analyzing CORS Security...")
+        publish("Analyzing CORS security")
+        results["cors_analysis"] = analyze_cors_security(
+            start_url, results["findings"]
+        )
+        publish("CORS analysis complete",
+                cors_issues_found=len(results["cors_analysis"].get("issues", [])))
+
         await browser.close()
 
     results["pages"]     = sorted(visited_pages)
     results["api_calls"] = sorted(api_calls)
     publish("Scan complete")
 
-    print(f"\n🔗 Pages Discovered:  {len(results['pages'])}")
-    print(f"📝 Forms Discovered:  {len(results['forms'])}")
-    print(f"⌨️  Inputs Discovered: {len(results['inputs'])}")
-    print(f"🔘 Buttons Discovered:{len(results['buttons'])}")
-    print(f"📡 API Calls Captured:{len(results['api_calls'])}")
-    print(f"🚨 Findings:          {len(results['findings'])}")
+    print(f"\n🔗 Pages Discovered:      {len(results['pages'])}")
+    print(f"📝 Forms Discovered:      {len(results['forms'])}")
+    print(f"⌨️  Inputs Discovered:     {len(results['inputs'])}")
+    print(f"🔘 Buttons Discovered:    {len(results['buttons'])}")
+    print(f"📡 API Calls Captured:    {len(results['api_calls'])}")
+    print(f"🗂️  Sensitive Paths Found: {len([p for p in results['sensitive_paths'] if p.get('severity') not in (None, 'none', 'Info')])}")
+    print(f"🌐 CORS Issues Found:     {len(results['cors_analysis'].get('issues', []))}")
+    print(f"🚨 Findings:              {len(results['findings'])}")
 
     return results

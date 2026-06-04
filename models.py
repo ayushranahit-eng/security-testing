@@ -10,14 +10,16 @@ class ScanRequest(BaseModel):
 
 
 class ScanResponse(BaseModel):
-    target:           str
-    scan_time:        str
-    pages:            list[str]
-    forms:            list[dict[str, Any]]
-    inputs:           list[dict[str, Any]]
-    buttons:          list[str]
-    api_calls:        list[str]
-    security_headers: dict[str, Any]
-    cookies:          list[dict[str, Any]]
-    ssl:              dict[str, Any]
-    findings:         list[dict[str, Any]]
+    target:                    str
+    scan_time:                 str
+    pages:                     list[str]
+    forms:                     list[dict[str, Any]]
+    inputs:                    list[dict[str, Any]]
+    buttons:                   list[str]
+    api_calls:                 list[str]
+    security_headers:          dict[str, Any]
+    cookies:                   list[dict[str, Any]]
+    ssl:                       dict[str, Any]
+    sensitive_paths:           list[dict[str, Any]]
+    cors_analysis:             dict[str, Any]
+    findings:                  list[dict[str, Any]]

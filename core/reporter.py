@@ -128,6 +128,10 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
             } for i, f in enumerate(findings)
         ],
         
+        "sensitive_path_analysis": _analyze_sensitive_paths(data.get("sensitive_paths", [])),
+
+        "cors_security_analysis": _analyze_cors_for_readable_report(data.get("cors_analysis", {})),
+
         "next_steps": _generate_next_steps(findings, data),
         
         "raw_data": {
@@ -313,6 +317,143 @@ def _get_engineer_notes(finding: dict) -> str:
     return f"This {severity} severity finding should be reviewed by the security team and prioritized according to your risk management process."
 
 
+def _analyze_sensitive_paths(probe_results: list) -> dict:
+    """
+    Format sensitive path probe results for the readable JSON report.
+    Separates actionable hits (accessible or blocked-but-notable) from
+    clean results so the reader only focuses on what matters.
+    """
+    actionable = [
+        p for p in probe_results
+        if p.get("severity") not in (None, "none", "Info")
+    ]
+    clean_count = len(probe_results) - len(actionable)
+
+    if not actionable:
+        return {
+            "status":      "✅ No sensitive paths exposed",
+            "paths_probed": len(probe_results),
+            "findings":    [],
+            "note":        f"All {len(probe_results)} probed paths returned 404 or were otherwise clean."
+        }
+
+    formatted_hits = []
+    for probe in actionable:
+        blocked = probe.get("blocked", False)
+        formatted_hits.append({
+            "path":         probe.get("path"),
+            "full_url":     probe.get("url"),
+            "http_status":  probe.get("status"),
+            "content_type": probe.get("content_type") or "unknown",
+            "response_size_bytes": probe.get("size"),
+            "severity":     probe.get("severity"),
+            "accessible":   not blocked,
+            "status_label": "BLOCKED — server knows this path exists but denies access" if blocked
+                            else "ACCESSIBLE — content is readable",
+            "engineer_note": _get_sensitive_path_note(probe.get("path", ""), blocked),
+        })
+
+    return {
+        "status":         f"⚠️  {len(actionable)} sensitive path(s) detected",
+        "paths_probed":   len(probe_results),
+        "clean_paths":    clean_count,
+        "findings":       formatted_hits,
+    }
+
+
+def _get_sensitive_path_note(path: str, blocked: bool) -> str:
+    """Return an engineer-style note for a specific sensitive path hit."""
+    path_lower = path.lower()
+    if ".env" in path_lower:
+        return "Environment file may contain database passwords, API keys, and service credentials. Immediate remediation required."
+    if ".git" in path_lower:
+        return "Git repository metadata is exposed. Attackers can reconstruct source code and discover secrets committed to version control."
+    if "swagger" in path_lower or "openapi" in path_lower:
+        return "API specification is publicly accessible. This reveals all endpoints, parameters, and authentication methods to potential attackers."
+    if "actuator" in path_lower:
+        return "Spring Boot Actuator endpoint is exposed. May leak environment variables, configuration, bean mappings, and heap dumps."
+    if "phpinfo" in path_lower:
+        return "phpinfo() output reveals server configuration, installed modules, and environment variables."
+    if any(x in path_lower for x in ["backup", ".sql", "dump"]):
+        return "Database or backup file may be directly downloadable — contains all application data."
+    if "wp-config" in path_lower:
+        return "WordPress configuration file contains database credentials in plaintext."
+    if blocked:
+        return "Path is blocked (403) but the server acknowledges it exists. Review access controls and consider removing this path entirely."
+    return "Sensitive path is accessible — review what information it exposes and restrict access appropriately."
+
+
+def _analyze_cors_for_readable_report(cors_analysis: dict) -> dict:
+    """
+    Format CORS analysis results for the readable JSON report.
+    """
+    issues = cors_analysis.get("issues", [])
+
+    if not issues:
+        return {
+            "status": "✅ No CORS issues detected",
+            "tested_url": cors_analysis.get("tested_url"),
+            "issues": [],
+            "note": "CORS policy appears correctly configured or not present (same-origin default applies)."
+        }
+
+    severity_priority = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    worst_severity    = min(issues, key=lambda i: severity_priority.get(i.get("severity", "Low"), 3))
+
+    status_labels = {
+        "Critical": "🔴 CRITICAL — Immediate action required",
+        "High":     "🟠 HIGH — Fix before production deployment",
+        "Medium":   "🟡 MEDIUM — Plan remediation",
+        "Low":      "🟢 LOW — Review and document",
+    }
+
+    return {
+        "status":     status_labels.get(worst_severity["severity"], "⚠️  Issues found"),
+        "tested_url": cors_analysis.get("tested_url"),
+        "issues": [
+            {
+                "issue_type":   issue.get("issue_type"),
+                "severity":     issue.get("severity"),
+                "description":  issue.get("description"),
+                "evidence":     issue.get("evidence", {}),
+                "remediation":  issue.get("remediation"),
+            }
+            for issue in issues
+        ],
+        "engineer_summary": _get_cors_engineer_summary(issues),
+    }
+
+
+def _get_cors_engineer_summary(issues: list) -> str:
+    """Return a plain-English paragraph summarising the CORS findings."""
+    if not issues:
+        return "No CORS issues found."
+
+    critical = [i for i in issues if i.get("severity") == "Critical"]
+    high     = [i for i in issues if i.get("severity") == "High"]
+
+    if critical:
+        return (
+            f"Found {len(critical)} critical CORS issue(s). "
+            "The server reflects attacker-controlled origins AND allows credentials — "
+            "this means a malicious website can make authenticated API requests on behalf of "
+            "a logged-in user and read the response. This is a full CORS bypass and requires "
+            "immediate remediation."
+        )
+    if high:
+        issue_types = ", ".join(i.get("issue_type", "") for i in high)
+        return (
+            f"Found {len(high)} high-severity CORS issue(s): {issue_types}. "
+            "Cross-origin requests from untrusted origins are being permitted. "
+            "Review and restrict the CORS policy to an explicit allowlist of trusted origins."
+        )
+    return (
+        f"Found {len(issues)} lower-severity CORS observation(s). "
+        "No critical bypass was detected, but the CORS policy should be reviewed "
+        "and tightened to follow the principle of least privilege."
+    )
+
+
 def _generate_next_steps(findings: list, data: dict) -> dict:
     """Generate actionable next steps based on findings."""
     steps = {
@@ -323,17 +464,24 @@ def _generate_next_steps(findings: list, data: dict) -> dict:
     }
     
     # Analyze findings
-    has_high = any(f.get("severity") == "High" for f in findings)
-    has_medium = any(f.get("severity") == "Medium" for f in findings)
-    has_missing_headers = any("Header" in f.get("vulnerability", "") for f in findings)
-    has_cookie_issues = any("Cookie" in f.get("vulnerability", "") for f in findings)
-    has_ssl_issues = any("SSL" in f.get("vulnerability", "") or "Certificate" in f.get("vulnerability", "") for f in findings)
+    has_high     = any(f.get("severity") == "High"   for f in findings)
+    has_medium   = any(f.get("severity") == "Medium" for f in findings)
+    has_missing_headers  = any("Header"      in f.get("vulnerability", "") for f in findings)
+    has_cookie_issues    = any("Cookie"      in f.get("vulnerability", "") for f in findings)
+    has_ssl_issues       = any("SSL"         in f.get("vulnerability", "") or
+                               "Certificate" in f.get("vulnerability", "") for f in findings)
+    has_sensitive_paths  = any("Sensitive Path" in f.get("vulnerability", "") for f in findings)
+    has_cors_issues      = any("CORS"        in f.get("vulnerability", "") for f in findings)
     
     # Immediate actions
     if has_high:
         steps["immediate_actions"].append("🔴 Address HIGH severity findings immediately")
     if has_ssl_issues:
         steps["immediate_actions"].append("🔒 Verify SSL certificate configuration and renewal timeline")
+    if has_sensitive_paths:
+        steps["immediate_actions"].append("🗂️  Restrict or remove exposed sensitive paths immediately — check for .env, .git, backup files")
+    if has_cors_issues and any(f.get("severity") == "Critical" for f in findings if "CORS" in f.get("vulnerability", "")):
+        steps["immediate_actions"].append("🌐 Fix Critical CORS misconfiguration — attackers can make authenticated cross-origin requests")
     if not steps["immediate_actions"]:
         steps["immediate_actions"].append("✅ No immediate critical actions required")
     
@@ -344,6 +492,8 @@ def _generate_next_steps(findings: list, data: dict) -> dict:
         steps["short_term_actions"].append("🛡️ Implement missing security headers in web server configuration")
     if has_cookie_issues:
         steps["short_term_actions"].append("🍪 Update cookie security attributes in application code")
+    if has_cors_issues:
+        steps["short_term_actions"].append("🌐 Review and tighten CORS policy — restrict to an explicit allowlist of trusted origins")
     
     # Recommendations
     steps["recommendations"].append(f"🔍 {len(data.get('inputs', []))} input fields identified - conduct thorough injection and XSS testing")
@@ -453,6 +603,49 @@ def generate_text_report(data: dict, scan_time: str) -> str:
             req   = "required" if inp.get("required") else ""
             pg    = inp.get("page")        or "—"
             add(f"  [{type_:<14}]  id={id_:<28}  name={name:<20}  placeholder={ph:<20}  {req}  ({pg})")
+    add("")
+
+    add("SENSITIVE PATH PROBING")
+    add(sep2)
+    sensitive_paths = data.get("sensitive_paths", [])
+    actionable_paths = [
+        p for p in sensitive_paths
+        if p.get("severity") not in (None, "none", "Info")
+    ]
+    if not actionable_paths:
+        add("  No sensitive paths found or accessible.")
+    else:
+        for probe in actionable_paths:
+            status   = probe.get("status", "?")
+            severity = probe.get("severity", "?")
+            path     = probe.get("path", "?")
+            ct       = probe.get("content_type") or "unknown"
+            size     = probe.get("size")
+            blocked  = probe.get("blocked", False)
+            tag      = "BLOCKED (403)" if blocked else f"ACCESSIBLE ({status})"
+            size_str = f"  {size}B" if size is not None else ""
+            add(f"  [{severity:<8}]  {path:<40}  {tag}  {ct}{size_str}")
+    add("")
+
+    add("CORS SECURITY ANALYSIS")
+    add(sep2)
+    cors_analysis = data.get("cors_analysis", {})
+    cors_issues   = cors_analysis.get("issues", [])
+    if not cors_issues:
+        add("  No CORS issues detected.")
+    else:
+        for issue in cors_issues:
+            severity    = issue.get("severity", "?")
+            issue_type  = issue.get("issue_type", "?")
+            description = issue.get("description", "")
+            remediation = issue.get("remediation", "")
+            evidence    = issue.get("evidence", {})
+            add(f"  [{severity:<8}]  {issue_type}")
+            add(f"             {description}")
+            for header_name, header_value in evidence.items():
+                add(f"             Evidence  : {header_name}: {header_value}")
+            add(f"             Fix       : {remediation}")
+            add("")
     add("")
 
     add(sep)
