@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HIT SecureScan</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="./assets/hit.png" alt="Hands In Technology" class="hit-logo">
+      <div class="brand-copy">
+        <strong>HIT SecureScan</strong>
+        <span>Website Security Scanner</span>
+      </div>
+    </div>
+    <div class="security-mark" aria-label="Security tool logo">
+      <span>SECURITY</span>
+      <strong>SCAN OPS</strong>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="scan-console no-print">
+      <div class="intro">
+        <p class="eyebrow">External security assessment</p>
+        <h1>Scan a website and get an engineer-readable security report.</h1>
+        <p>
+          The scanner crawls the site, captures application behavior, checks security controls,
+          records evidence, and turns the result into actionable remediation guidance.
+        </p>
+      </div>
+
+      <form id="scanForm" class="scan-form">
+        <label>
+          Website URL
+          <input id="targetUrl" type="url" placeholder="https://example.com" required>
+        </label>
+        <div class="form-row">
+          <label class="field-with-help">
+            Max pages
+            <input id="maxPages" type="number" min="1" max="100" value="20">
+            <small>How many internal pages we will visit before stopping the crawl.</small>
+          </label>
+          <label class="field-with-help">
+            Max depth
+            <input id="maxDepth" type="number" min="1" max="10" value="2">
+            <small>How far away from the starting page we follow links. Home page is depth 0, its links are depth 1.</small>
+          </label>
+        </div>
+        <button id="startBtn" class="primary-btn" type="submit">Start Security Scan</button>
+      </form>
+    </section>
+
+    <section id="livePanel" class="live-panel hidden no-print">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Live scan process</p>
+          <h2 id="liveTitle">Preparing scan</h2>
+        </div>
+        <span id="scanStatus" class="status-pill">Queued</span>
+      </div>
+
+      <div class="progress-track">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+
+      <div class="metrics-grid">
+        <div><span id="pagesMetric">0</span><small>Pages crawled</small></div>
+        <div><span id="formsMetric">0</span><small>Forms found</small></div>
+        <div><span id="inputsMetric">0</span><small>Inputs discovered</small></div>
+        <div><span id="apiMetric">0</span><small>Network calls</small></div>
+        <div><span id="findingsMetric">0</span><small>Findings so far</small></div>
+      </div>
+
+      <div class="live-body">
+        <div class="feed-panel">
+          <div class="feed-panel-head">
+            <strong>Live evidence feed</strong>
+            <span>Recent crawl, interaction, and control-check activity</span>
+          </div>
+          <ol id="stepList" class="step-list"></ol>
+        </div>
+        <div class="plain-note">
+          <strong>What is happening?</strong>
+          <p id="plainProgress">
+            We are safely mapping the site before making security judgments.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="reportPanel" class="report-panel hidden">
+      <div class="report-actions no-print">
+        <div>
+          <p class="eyebrow">Security report</p>
+          <h2>Your scan report is ready</h2>
+        </div>
+        <button id="pdfBtn" class="primary-btn" type="button">Save as PDF</button>
+      </div>
+
+      <article id="report" class="report-document">
+        <section class="report-cover">
+          <div class="report-cover-top">
+            <div class="cover-brand">
+              <img src="./assets/hit.png" alt="Hands In Technology">
+              <div>
+                <strong>HIT SecureScan</strong>
+                <span>Security Engineer Report</span>
+              </div>
+            </div>
+            <div class="report-label">
+              <span>Prepared By</span>
+              <strong>Hands In Technology</strong>
+            </div>
+          </div>
+          <h2 id="reportTarget">Security Assessment</h2>
+          <p id="reportDate"></p>
+          <div class="cover-status-row">
+            <div id="riskBadge" class="risk-badge">Risk: Pending</div>
+            <div class="report-chip">Evidence based</div>
+            <div class="report-chip">Actionable remediation</div>
+          </div>
+        </section>
+
+        <section class="report-section">
+          <h3>Executive Summary</h3>
+          <p id="summaryText"></p>
+          <div id="scopeGrid" class="summary-grid"></div>
+        </section>
+
+        <section class="report-section">
+          <h3>Top Security Priorities</h3>
+          <div id="topRisks" class="finding-list"></div>
+        </section>
+
+        <section class="report-section">
+          <h3>Evidence And Attack Surface</h3>
+          <div id="attackSurface" class="two-column"></div>
+        </section>
+
+        <section class="report-section">
+          <h3>Security Control Analysis</h3>
+          <div id="controlAnalysis" class="finding-list"></div>
+        </section>
+
+        <section class="report-section">
+          <h3>Detailed Findings</h3>
+          <div id="findingDetails" class="finding-list"></div>
+        </section>
+
+        <section class="report-section cta-section">
+          <div class="cta-card">
+            <div class="cta-brand">
+              <img src="./assets/hit.png" alt="Hands In Technology">
+              <div>
+                <p class="eyebrow">Remediation support</p>
+                <h3>Need Help Fixing This?</h3>
+              </div>
+            </div>
+            <p>
+              Hands In Technology can help validate findings, harden your website,
+              configure security headers, review API exposure, secure cookies, and turn
+              this report into a practical remediation roadmap.
+            </p>
+            <div class="cta-grid">
+              <div>
+                <strong>Email Me</strong>
+                <a href="mailto:info@handsintechnology.com">info@handsintechnology.com</a>
+              </div>
+              <div>
+                <strong>India Phone</strong>
+                <a href="tel:+917977747037">+91 7977747037</a>
+              </div>
+              <div class="wide">
+                <strong>India Address</strong>
+                <span>412, Ghanshyam Enclave Near Lalji Pada Police Station, New Link Rd, Kandivali West, Mumbai, Maharashtra 400067</span>
+              </div>
+            </div>
+            <a class="cta-button" href="https://handsintechnology.com" target="_blank" rel="noreferrer">Visit handsintechnology.com</a>
+          </div>
+        </section>
+      </article>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

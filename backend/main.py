@@ -18,6 +18,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from models        import ScanRequest
@@ -36,6 +37,19 @@ app = FastAPI(
 
 SCAN_JOBS: dict[str, dict] = {}
 SCAN_LOCK = threading.Lock()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
+        "null",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 
 def _build_cfg(req: ScanRequest) -> dict:
