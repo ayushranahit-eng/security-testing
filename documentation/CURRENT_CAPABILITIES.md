@@ -13,6 +13,12 @@ This document summarizes what the scanner can currently detect, why each capabil
 | Form and input discovery | Finds user-controlled entry points. | Identifies areas that need injection, validation, and workflow testing. | Medium |
 | Safe interaction testing | Interacts with pages to reveal hidden flows and API calls. | Discovers behavior that static crawling may miss. | Medium |
 | API endpoint discovery | Captures frontend-triggered backend requests. | Reveals hidden or undocumented API surfaces that may need authorization testing. | Medium to High |
+| JavaScript secret scanning | Detects exposed keys, tokens, and credentials in frontend code. | Helps prevent unauthorized API use, cloud abuse, and credential leakage from client-side assets. | High to Critical |
+| Open redirect validation | Tests redirect-style parameters and flows for attacker-controlled redirects. | Helps prevent phishing, trust abuse, and token-forwarding style attacks. | Medium to High |
+| DOM-based XSS validation | Tests client-side handling of attacker-controlled fragment input. | Helps identify browser-side code execution risk caused by unsafe DOM sinks. | High to Critical |
+| Reflected XSS validation | Tests whether input is reflected back into the page without safe handling. | Helps identify browser-side script execution risk, session theft, and phishing overlays. | High to Critical |
+| Stored XSS validation | Tests whether attacker-controlled HTML persists after submission and reload. | Helps identify persistent browser-side code execution risk affecting later viewers. | High to Critical |
+| SQL injection validation | Tests low-risk parameters and forms for database error leakage and response anomalies. | Helps identify injection paths that could expose or modify database content. | High to Critical |
 | Sensitive path probing | Tests common exposed files and admin/config paths. | Detects leaked secrets, config files, backups, API docs, and admin panels. | Medium to Critical |
 | CORS security analysis | Checks risky cross-origin trust behavior. | Finds misconfigurations that could allow malicious sites to read user data. | Medium to Critical |
 | Report generation | Converts scan data into readable output. | Helps developers understand findings and decide next actions. | Operational |
@@ -89,6 +95,84 @@ Impact: Reveals undocumented endpoints that should be tested for authentication,
 
 Risk: Medium to High.
 
+### JavaScript Secret Scanning
+
+Scans first-party JavaScript files and inline scripts for:
+
+- OpenAI-style API keys
+- AWS access keys
+- GitHub tokens
+- Stripe keys
+- Google API keys
+- JWT-like tokens
+- high-entropy secret assignments
+
+Importance: Frontend JavaScript often becomes a source of accidental credential leakage.
+
+Impact: Exposed secrets can lead to unauthorized API use, cloud abuse, service impersonation, or further compromise.
+
+Risk: High to Critical.
+
+### Open Redirect Validation
+
+Tests redirect-style parameters such as:
+
+- `redirect`
+- `next`
+- `returnUrl`
+- `continue`
+- `destination`
+
+Importance: A trusted domain that can redirect to attacker-controlled destinations is valuable for phishing and malicious auth-flow chaining.
+
+Impact: Attackers can abuse a legitimate domain to increase trust in phishing links or redirect users to malicious pages.
+
+Risk: Medium to High.
+
+### DOM-Based XSS Validation
+
+Tests whether attacker-controlled URL fragment data is rendered into the DOM by client-side JavaScript.
+
+Importance: DOM-based XSS can happen entirely in frontend code, even when the server never reflects the payload.
+
+Impact: Can lead to browser-side code execution, session theft, phishing overlays, and account takeover chains.
+
+Risk: High to Critical.
+
+### Reflected XSS Validation
+
+Tests low-risk URL parameters and safe form flows for unsanitized HTML reflection.
+
+Importance: Reflected XSS is one of the most damaging browser-side issues because it executes in the victim's session context.
+
+Impact: Can lead to session theft, malicious overlays, credential capture, and client-side account takeover chains.
+
+Risk: High to Critical.
+
+### Stored XSS Validation
+
+Tests low-risk forms with a unique payload, then checks whether the payload persists after submission and reload.
+
+Importance: Stored XSS is often more damaging than reflected XSS because later viewers can be affected without taking a special action.
+
+Impact: Can lead to persistent session theft, administrative compromise, malicious content injection, and multi-user impact.
+
+Risk: High to Critical.
+
+### SQL Injection Validation
+
+Tests low-risk GET parameters and safe search-style forms with conservative SQL payloads, then checks for:
+
+- database error messages
+- SQL exception patterns
+- strong response anomalies
+
+Importance: SQL injection remains one of the highest-impact application vulnerabilities.
+
+Impact: A confirmed issue could expose, modify, or destroy data and may lead to authentication bypass or broader compromise.
+
+Risk: High to Critical.
+
 ### Sensitive Path Probing
 
 Checks common exposed paths such as:
@@ -124,7 +208,13 @@ The scanner currently provides strong coverage for:
 - Attack surface mapping
 - Security misconfiguration detection
 - Information disclosure checks
+- Frontend secret exposure checks
+- Redirect validation
+- DOM-based XSS validation
+- Reflected XSS validation
+- Stored XSS validation
+- Initial SQL injection heuristics
 - Browser and API discovery
 - Developer-readable reporting
 
-The next major improvement area is active vulnerability validation, such as SQL injection, XSS, JavaScript secret scanning, and technology/CVE detection.
+The next major improvement area is deeper authenticated validation, stored XSS coverage, stronger SQLi confirmation logic, and technology/CVE detection.

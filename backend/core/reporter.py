@@ -35,6 +35,12 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
     api_analysis = _classify_network_calls(target_url, data.get("api_calls", []))
     sensitive_analysis = _analyze_sensitive_paths(data.get("sensitive_paths", []))
     cookie_analysis = _analyze_cookies(data.get("cookies", []))
+    js_secret_analysis = _analyze_javascript_secrets(data.get("javascript_secrets", {}))
+    dom_xss_analysis = _analyze_dom_xss(data.get("dom_xss", []))
+    open_redirect_analysis = _analyze_open_redirect(data.get("open_redirect", []))
+    reflected_xss_analysis = _analyze_reflected_xss(data.get("reflected_xss", []))
+    stored_xss_analysis = _analyze_stored_xss(data.get("stored_xss", []))
+    sql_injection_analysis = _analyze_sql_injection(data.get("sql_injection", []))
     finding_analysis = _analyze_findings(findings)
     counts = _severity_counts(finding_analysis["findings"])
 
@@ -56,7 +62,17 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
             },
             "finding_counts": counts,
             "top_risks": finding_analysis["top_risks"],
-            "summary": _executive_summary_text(counts, sensitive_analysis, cookie_analysis),
+            "summary": _executive_summary_text(
+                counts,
+                sensitive_analysis,
+                cookie_analysis,
+                js_secret_analysis,
+                dom_xss_analysis,
+                open_redirect_analysis,
+                reflected_xss_analysis,
+                stored_xss_analysis,
+                sql_injection_analysis,
+            ),
         },
         "attack_surface_analysis": {
             "pages": {
@@ -70,6 +86,12 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
             "headers": _analyze_headers(data.get("security_headers", {})),
             "ssl": _analyze_ssl(data.get("ssl", {})),
             "cookies": cookie_analysis,
+            "javascript_secrets": js_secret_analysis,
+            "dom_xss": dom_xss_analysis,
+            "open_redirect": open_redirect_analysis,
+            "reflected_xss": reflected_xss_analysis,
+            "stored_xss": stored_xss_analysis,
+            "sql_injection": sql_injection_analysis,
             "sensitive_paths": sensitive_analysis,
             "cors": _analyze_cors_for_readable_report(data.get("cors_analysis", {})),
         },
@@ -88,6 +110,12 @@ def generate_text_report(data: dict, scan_time: str) -> str:
     api_analysis = _classify_network_calls(target_url, data.get("api_calls", []))
     sensitive_analysis = _analyze_sensitive_paths(data.get("sensitive_paths", []))
     cookie_analysis = _analyze_cookies(data.get("cookies", []))
+    js_secret_analysis = _analyze_javascript_secrets(data.get("javascript_secrets", {}))
+    dom_xss_analysis = _analyze_dom_xss(data.get("dom_xss", []))
+    open_redirect_analysis = _analyze_open_redirect(data.get("open_redirect", []))
+    reflected_xss_analysis = _analyze_reflected_xss(data.get("reflected_xss", []))
+    stored_xss_analysis = _analyze_stored_xss(data.get("stored_xss", []))
+    sql_injection_analysis = _analyze_sql_injection(data.get("sql_injection", []))
     input_summary = _summarize_inputs(data.get("inputs", []))
     analyzed_findings = _analyze_findings(findings)["findings"]
     counts = _severity_counts(analyzed_findings)
@@ -114,7 +142,20 @@ def generate_text_report(data: dict, scan_time: str) -> str:
         f"{len(data.get('forms', []))} forms, {len(data.get('inputs', []))} inputs, "
         f"{len(data.get('api_calls', []))} network requests")
     add("")
-    for line in _wrap(_executive_summary_text(counts, sensitive_analysis, cookie_analysis), 70):
+    for line in _wrap(
+        _executive_summary_text(
+            counts,
+            sensitive_analysis,
+            cookie_analysis,
+            js_secret_analysis,
+            dom_xss_analysis,
+            open_redirect_analysis,
+            reflected_xss_analysis,
+            stored_xss_analysis,
+            sql_injection_analysis,
+        ),
+        70,
+    ):
         add(line)
     add("")
 
@@ -174,6 +215,34 @@ def generate_text_report(data: dict, scan_time: str) -> str:
     add(f"Cookies : {cookie_analysis['status']}")
     for item in cookie_analysis["notable_cookies"][:8]:
         add(f"  - {item['name']} [{item['category']}]: {item['risk']} - {item['issue_summary']}")
+    add("")
+
+    add("ACTIVE VALIDATION")
+    add(sep2)
+    add(f"JavaScript secret scan : {js_secret_analysis['status']}")
+    add(f"JS files scanned       : {js_secret_analysis['scanned_files']}")
+    for item in js_secret_analysis["top_detections"][:8]:
+        add(f"  - [{item['severity']}] {item['type']} in {item['source']}: {item['value_preview']}")
+    add(f"DOM-based XSS testing  : {dom_xss_analysis['status']}")
+    add(f"DOM XSS vectors found  : {dom_xss_analysis['count']}")
+    for item in dom_xss_analysis["vectors"][:8]:
+        add(f"  - [{item['severity']}] {item['vector']} on {item['tested_url']}")
+    add(f"Open redirect testing  : {open_redirect_analysis['status']}")
+    add(f"Redirect vectors found : {open_redirect_analysis['count']}")
+    for item in open_redirect_analysis["vectors"][:8]:
+        add(f"  - [{item['severity']}] {item['vector']} on {item['tested_url']} -> {item['redirect_target']}")
+    add(f"Reflected XSS testing  : {reflected_xss_analysis['status']}")
+    add(f"XSS vectors detected   : {reflected_xss_analysis['count']}")
+    for item in reflected_xss_analysis["vectors"][:8]:
+        add(f"  - [{item['severity']}] {item['vector']} on {item['tested_url']}")
+    add(f"Stored XSS testing     : {stored_xss_analysis['status']}")
+    add(f"Stored XSS vectors     : {stored_xss_analysis['count']}")
+    for item in stored_xss_analysis["vectors"][:8]:
+        add(f"  - [{item['severity']}] {item['vector']} on {item['tested_url']}")
+    add(f"SQL injection testing  : {sql_injection_analysis['status']}")
+    add(f"SQLi vectors detected  : {sql_injection_analysis['count']}")
+    for item in sql_injection_analysis["vectors"][:8]:
+        add(f"  - [{item['severity']}] {item['vector']} on {item['tested_url']}")
     add("")
 
     add("SENSITIVE PATH ANALYSIS")
@@ -250,7 +319,17 @@ def _overall_risk(counts: dict, sensitive_analysis: dict) -> str:
     return "Informational"
 
 
-def _executive_summary_text(counts: dict, sensitive_analysis: dict, cookie_analysis: dict) -> str:
+def _executive_summary_text(
+    counts: dict,
+    sensitive_analysis: dict,
+    cookie_analysis: dict,
+    js_secret_analysis: dict,
+    dom_xss_analysis: dict,
+    open_redirect_analysis: dict,
+    reflected_xss_analysis: dict,
+    stored_xss_analysis: dict,
+    sql_injection_analysis: dict,
+) -> str:
     exposed = len(sensitive_analysis.get("exposed_paths", []))
     blocked = len(sensitive_analysis.get("blocked_paths", []))
     cookie_issues = len(cookie_analysis.get("notable_cookies", []))
@@ -263,6 +342,30 @@ def _executive_summary_text(counts: dict, sensitive_analysis: dict, cookie_analy
     if blocked:
         parts.append(
             f"{blocked} sensitive path(s) returned blocked responses. Treat these as detection signals, not confirmed exposure."
+        )
+    if js_secret_analysis.get("count", 0):
+        parts.append(
+            f"{js_secret_analysis['count']} JavaScript secret exposure(s) were detected. Treat any live key or token in frontend code as immediately actionable."
+        )
+    if dom_xss_analysis.get("count", 0):
+        parts.append(
+            f"{dom_xss_analysis['count']} DOM-based XSS path(s) were detected from client-side rendering of attacker-controlled fragment input."
+        )
+    if open_redirect_analysis.get("count", 0):
+        parts.append(
+            f"{open_redirect_analysis['count']} open redirect path(s) were validated. These can be abused for phishing and trust-hijacking from the target domain."
+        )
+    if reflected_xss_analysis.get("count", 0):
+        parts.append(
+            f"{reflected_xss_analysis['count']} reflected XSS validation path(s) returned unsanitized HTML reflection and should be reviewed with priority."
+        )
+    if stored_xss_analysis.get("count", 0):
+        parts.append(
+            f"{stored_xss_analysis['count']} stored XSS path(s) showed payload persistence after submission and reload, which can indicate multi-user browser compromise risk."
+        )
+    if sql_injection_analysis.get("count", 0):
+        parts.append(
+            f"{sql_injection_analysis['count']} SQL injection signal(s) were detected from active input testing. Database error leakage or strong response anomalies should be triaged quickly."
         )
     if counts["Medium"] or counts["High"] or counts["Critical"]:
         parts.append(
@@ -351,7 +454,7 @@ def _summarize_inputs(inputs: list) -> dict:
         "file_inputs": by_type.get("file", 0),
         "hidden_inputs": by_type.get("hidden", 0),
         "by_type": dict(sorted(by_type.items(), key=lambda item: item[0])),
-        "risk_note": "Inputs are discovery evidence. Injection/XSS risk requires active validation, which is not yet performed by this scanner.",
+        "risk_note": "Inputs are mapped as attack surface. This scanner now performs limited reflected XSS validation, but deeper authenticated and server-side injection testing still requires manual review.",
     }
 
 
@@ -494,6 +597,63 @@ def _analyze_sensitive_paths(probe_results: list) -> dict:
         "critical_exposure_count": len([p for p in exposed if p["severity"] == "Critical"]),
         "high_exposure_count": len([p for p in exposed if p["severity"] == "High"]),
         "note": "HTTP 403 is not confirmed exposure; it is a signal that the route exists or is being blocked by the server/CDN.",
+    }
+
+
+def _analyze_javascript_secrets(scan_result: dict) -> dict:
+    detections = scan_result.get("detections", [])
+    return {
+        "status": scan_result.get("status", "Not run"),
+        "count": len(detections),
+        "scanned_files": scan_result.get("scanned_javascript_files", 0),
+        "scanned_inline_pages": scan_result.get("scanned_inline_script_pages", 0),
+        "top_detections": detections,
+        "note": scan_result.get("note", "JavaScript secret scanning was not available."),
+    }
+
+
+def _analyze_reflected_xss(vectors: list) -> dict:
+    return {
+        "status": "Potential reflected XSS detected" if vectors else "No reflected XSS detected in the tested flows",
+        "count": len(vectors),
+        "vectors": vectors,
+        "note": "The scanner tests URL parameters and low-risk form flows. Full authenticated XSS coverage still requires manual validation.",
+    }
+
+
+def _analyze_dom_xss(vectors: list) -> dict:
+    return {
+        "status": "Potential DOM-based XSS detected" if vectors else "No DOM-based XSS detected in the tested fragment flows",
+        "count": len(vectors),
+        "vectors": vectors,
+        "note": "Current DOM-XSS testing focuses on URL fragment handling because fragments never reach the server and are ideal for client-side sink checks.",
+    }
+
+
+def _analyze_open_redirect(vectors: list) -> dict:
+    return {
+        "status": "Potential open redirect detected" if vectors else "No open redirect detected in the tested redirect flows",
+        "count": len(vectors),
+        "vectors": vectors,
+        "note": "Testing is focused on redirect-style parameters and GET-based redirect flows to keep the scan safe.",
+    }
+
+
+def _analyze_sql_injection(vectors: list) -> dict:
+    return {
+        "status": "Potential SQL injection detected" if vectors else "No SQL injection evidence detected in the tested low-risk flows",
+        "count": len(vectors),
+        "vectors": vectors,
+        "note": "Current SQLi testing is heuristic and conservative. Confirm findings manually, especially where only response anomalies were observed.",
+    }
+
+
+def _analyze_stored_xss(vectors: list) -> dict:
+    return {
+        "status": "Potential stored XSS detected" if vectors else "No stored XSS detected in the tested low-risk forms",
+        "count": len(vectors),
+        "vectors": vectors,
+        "note": "Stored-XSS testing is conservative and focuses on low-risk text forms. Broader authenticated workflow coverage still requires manual validation.",
     }
 
 
@@ -641,6 +801,104 @@ def _enrich_finding(finding: dict) -> dict:
             "raw": finding,
         }
 
+    if vuln == "JavaScript Secrets Exposed":
+        secrets = finding.get("secrets", [])
+        highest = secrets[0] if secrets else {}
+        return {
+            "title": "Secrets exposed in frontend JavaScript",
+            "severity": severity,
+            "priority": "P1",
+            "confidence": "High",
+            "impact": "Live API keys, access tokens, or cloud credentials in client-side code can allow unauthorized API use, data access, or broader cloud compromise.",
+            "evidence_summary": "; ".join(
+                f"{item['type']} in {item['source']} ({item['value_preview']})"
+                for item in secrets[:5]
+            ) or "; ".join(details),
+            "remediation": "Remove exposed secrets from client-side code, rotate compromised credentials, move privileged calls server-side, and enforce least-privilege scopes.",
+            "raw": finding,
+            "source_hint": highest.get("source"),
+        }
+
+    if vuln == "Reflected XSS":
+        vectors = finding.get("xss_vectors", [])
+        return {
+            "title": "Reflected XSS behavior detected",
+            "severity": severity,
+            "priority": "P1",
+            "confidence": "High" if vectors else "Medium",
+            "impact": "Reflected XSS can let attackers execute script in a victim browser, enabling session theft, phishing overlays, malicious redirects, or account takeover chains.",
+            "evidence_summary": "; ".join(
+                f"{item['vector']} on {item['tested_url']}"
+                for item in vectors[:5]
+            ) or "; ".join(details),
+            "remediation": "Apply context-aware output encoding, sanitize reflected input, add framework-safe templating, and use CSP as a secondary control rather than the primary fix.",
+            "raw": finding,
+        }
+
+    if vuln == "Open Redirect":
+        vectors = finding.get("redirect_vectors", [])
+        return {
+            "title": "Open redirect behavior detected",
+            "severity": severity,
+            "priority": "P1",
+            "confidence": "High" if vectors else "Medium",
+            "impact": "Open redirects let attackers abuse a trusted domain in phishing campaigns, token leakage chains, or auth-flow manipulation.",
+            "evidence_summary": "; ".join(
+                f"{item['vector']} on {item['tested_url']} -> {item['redirect_target']}"
+                for item in vectors[:5]
+            ) or "; ".join(details),
+            "remediation": "Restrict redirect destinations to approved internal paths or allowlisted hosts, and reject attacker-controlled absolute URLs.",
+            "raw": finding,
+        }
+
+    if vuln == "DOM-Based XSS":
+        vectors = finding.get("dom_xss_vectors", [])
+        return {
+            "title": "DOM-based XSS behavior detected",
+            "severity": severity,
+            "priority": "P1",
+            "confidence": "High" if vectors else "Medium",
+            "impact": "DOM-based XSS lets client-side code turn attacker-controlled input into live DOM content, enabling browser-side code execution without server reflection.",
+            "evidence_summary": "; ".join(
+                f"{item['vector']} on {item['tested_url']}"
+                for item in vectors[:5]
+            ) or "; ".join(details),
+            "remediation": "Avoid unsafe sinks such as innerHTML for untrusted input, sanitize fragment and URL-derived values, and use safe DOM APIs or framework escaping.",
+            "raw": finding,
+        }
+
+    if vuln == "SQL Injection":
+        vectors = finding.get("sqli_vectors", [])
+        return {
+            "title": "SQL injection signal detected",
+            "severity": severity,
+            "priority": "P1",
+            "confidence": "Medium" if vectors else "Low",
+            "impact": "Successful SQL injection can expose, modify, or destroy database content and may lead to authentication bypass or broader system compromise.",
+            "evidence_summary": "; ".join(
+                f"{item['vector']} on {item['tested_url']}: {item['evidence']}"
+                for item in vectors[:5]
+            ) or "; ".join(details),
+            "remediation": "Use parameterized queries, strict server-side validation, ORM-safe bindings, and suppress database error leakage to users.",
+            "raw": finding,
+        }
+
+    if vuln == "Stored XSS":
+        vectors = finding.get("stored_xss_vectors", [])
+        return {
+            "title": "Stored XSS behavior detected",
+            "severity": severity,
+            "priority": "P1",
+            "confidence": "Medium" if vectors else "Low",
+            "impact": "Stored XSS can impact every user who views the injected content, leading to persistent session theft, phishing, or account takeover chains.",
+            "evidence_summary": "; ".join(
+                f"{item['vector']} on {item['tested_url']}: {item['evidence']}"
+                for item in vectors[:5]
+            ) or "; ".join(details),
+            "remediation": "Apply context-aware output encoding for stored content, sanitize rich text safely, validate input server-side, and review any workflow that persists user-supplied HTML.",
+            "raw": finding,
+        }
+
     if "CORS" in vuln:
         return {
             "title": "CORS policy observation",
@@ -673,10 +931,22 @@ def _generate_next_steps(findings: list, data: dict, api_analysis: dict, sensiti
         steps.append("Implement missing security headers at the web server, CDN, or application middleware layer.")
     if any("Cookie" in f.get("vulnerability", "") for f in findings):
         steps.append("Separate third-party cookies from real auth/session cookies, then harden session cookies with Secure, HttpOnly, and SameSite.")
+    if any(f.get("vulnerability") == "JavaScript Secrets Exposed" for f in findings):
+        steps.append("Rotate any exposed API keys or tokens immediately and move privileged secrets out of frontend JavaScript.")
+    if any(f.get("vulnerability") == "DOM-Based XSS" for f in findings):
+        steps.append("Patch DOM-based XSS by removing unsafe client-side sinks and sanitizing fragment or URL-derived input before rendering.")
+    if any(f.get("vulnerability") == "Open Redirect" for f in findings):
+        steps.append("Patch open redirects by enforcing allowlisted destinations and removing attacker-controlled external redirect targets.")
+    if any(f.get("vulnerability") == "Reflected XSS" for f in findings):
+        steps.append("Patch reflected XSS using context-aware output encoding and retest the exact reflected parameters and forms.")
+    if any(f.get("vulnerability") == "Stored XSS" for f in findings):
+        steps.append("Investigate stored XSS persistence paths, sanitize saved content, and review who can create or view the affected records.")
+    if any(f.get("vulnerability") == "SQL Injection" for f in findings):
+        steps.append("Investigate SQLi evidence immediately, verify query construction on the affected parameters, and convert unsafe queries to parameterized statements.")
     if api_analysis["counts"]["first_party_api"]:
         steps.append("Manually test first-party API-like endpoints for authentication, authorization, validation, and rate limiting.")
     if data.get("inputs"):
-        steps.append("Run active validation tests for inputs: reflected XSS, SQL injection, file upload abuse, and server-side validation bypass.")
+        steps.append("Extend input validation testing beyond the automated checks: authenticated reflected/stored XSS, SQL injection, file upload abuse, and server-side validation bypass.")
     steps.append("Re-run the scan after fixes and compare the findings count plus exposed path list.")
     return {"priority_order": steps}
 

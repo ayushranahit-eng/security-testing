@@ -19,10 +19,22 @@ const processNotes = {
   "Checking security headers": "The scanner is checking browser security controls like CSP, HSTS, clickjacking protection, and referrer policy.",
   "Analyzing cookies": "Cookies are being reviewed to understand whether they are safely configured.",
   "Discovering page elements": "Pages, forms, buttons, links, and inputs are being mapped as attack surface evidence.",
+  "Testing open redirects": "The scanner is checking redirect-style parameters and safe redirect flows to see whether users can be sent to attacker-controlled domains.",
+  "Open redirect testing complete": "Open redirect validation for this page is complete.",
+  "Testing DOM-based XSS": "The scanner is testing client-side handling of attacker-controlled URL fragments to see whether browser scripts inject them into the page.",
+  "DOM-based XSS testing complete": "Initial DOM-based XSS validation for this page is complete.",
+  "Testing reflected XSS": "The scanner is testing query parameters and low-risk form flows to see whether HTML is reflected back unsafely.",
+  "Reflected XSS testing complete": "Initial reflected XSS validation for this page is complete.",
+  "Testing stored XSS": "The scanner is testing low-risk forms to see whether attacker-controlled HTML persists after submission and reload.",
+  "Stored XSS testing complete": "Initial stored XSS validation for this page is complete.",
+  "Testing SQL injection": "The scanner is looking for database error leakage and strong response anomalies from low-risk input payloads.",
+  "SQL injection testing complete": "Initial SQL injection validation for this page is complete.",
   "Interacting with target page": "The scanner is safely interacting with non-destructive controls to reveal hidden workflows and network calls.",
   "Validating SSL certificate": "The TLS certificate is being checked for validity and expiry.",
   "Probing sensitive paths": "Common sensitive paths are being checked for accidental exposure.",
   "Analyzing CORS security": "Cross-origin browser trust behavior is being tested.",
+  "Scanning JavaScript for secrets": "First-party JavaScript files and inline scripts are being checked for exposed keys, tokens, and credentials.",
+  "JavaScript secret scan complete": "JavaScript secret exposure analysis is complete.",
   "Scan complete": "The scan is complete and the report is being prepared."
 };
 
@@ -250,10 +262,22 @@ function renderControls(analysis) {
   const headers = analysis.headers || {};
   const ssl = analysis.ssl || {};
   const cookies = analysis.cookies || {};
+  const javascriptSecrets = analysis.javascript_secrets || {};
+  const domXss = analysis.dom_xss || {};
+  const openRedirect = analysis.open_redirect || {};
+  const reflectedXss = analysis.reflected_xss || {};
+  const storedXss = analysis.stored_xss || {};
+  const sqlInjection = analysis.sql_injection || {};
   const sensitive = analysis.sensitive_paths || {};
   const cors = analysis.cors || {};
   const missingHeaders = headers.missing || [];
   const notableCookies = cookies.notable_cookies || [];
+  const secretDetections = javascriptSecrets.top_detections || [];
+  const domXssVectors = domXss.vectors || [];
+  const redirectVectors = openRedirect.vectors || [];
+  const xssVectors = reflectedXss.vectors || [];
+  const storedXssVectors = storedXss.vectors || [];
+  const sqliVectors = sqlInjection.vectors || [];
   const exposedPaths = sensitive.exposed_paths || [];
   const blockedPaths = sensitive.blocked_paths || [];
 
@@ -269,6 +293,42 @@ function renderControls(analysis) {
       <p><strong>SSL:</strong> ${escapeHtml(ssl.status || "Not available")} - ${escapeHtml(ssl.note || "")}</p>
       <p><strong>Cookies:</strong> ${escapeHtml(cookies.status || "Not available")}</p>
       <code>${escapeHtml(notableCookies.map((item) => `${item.name} [${item.category}]: ${item.issue_summary}`).join("\n") || "No notable cookie issues reported")}</code>
+    </div>
+    <div class="finding-card" data-severity="${secretDetections.length ? "High" : "Low"}">
+      <h4>JavaScript Secret Exposure</h4>
+      <p><strong>Status:</strong> ${escapeHtml(javascriptSecrets.status || "Not available")}</p>
+      <p><strong>Coverage:</strong> ${javascriptSecrets.scanned_files || 0} JavaScript file(s) and ${javascriptSecrets.scanned_inline_pages || 0} page(s) with inline scripts reviewed.</p>
+      <code>${escapeHtml(secretDetections.map((item) => `${item.type} - ${item.source} - ${item.value_preview}`).join("\n") || "No JavaScript secret exposure detected")}</code>
+    </div>
+    <div class="finding-card" data-severity="${domXssVectors.length ? "High" : "Low"}">
+      <h4>DOM-Based XSS Validation</h4>
+      <p><strong>Status:</strong> ${escapeHtml(domXss.status || "Not available")}</p>
+      <p><strong>Impact:</strong> DOM-based XSS happens in browser-side code and can execute without the server reflecting the payload.</p>
+      <code>${escapeHtml(domXssVectors.map((item) => `${item.vector} - ${item.tested_url}`).join("\n") || "No DOM-based XSS detected in the tested fragment flows")}</code>
+    </div>
+    <div class="finding-card" data-severity="${redirectVectors.length ? "High" : "Low"}">
+      <h4>Open Redirect Validation</h4>
+      <p><strong>Status:</strong> ${escapeHtml(openRedirect.status || "Not available")}</p>
+      <p><strong>Impact:</strong> Redirect abuse can turn a trusted domain into a phishing or token-forwarding step in an attack chain.</p>
+      <code>${escapeHtml(redirectVectors.map((item) => `${item.vector} - ${item.tested_url} -> ${item.redirect_target}`).join("\n") || "No open redirect detected in the tested flows")}</code>
+    </div>
+    <div class="finding-card" data-severity="${xssVectors.length ? "High" : "Low"}">
+      <h4>Reflected XSS Validation</h4>
+      <p><strong>Status:</strong> ${escapeHtml(reflectedXss.status || "Not available")}</p>
+      <p><strong>Impact:</strong> Unsanitized reflection can enable browser-side script execution, phishing overlays, and session compromise.</p>
+      <code>${escapeHtml(xssVectors.map((item) => `${item.vector} - ${item.tested_url}`).join("\n") || "No reflected XSS detected in the tested parameters and forms")}</code>
+    </div>
+    <div class="finding-card" data-severity="${storedXssVectors.length ? "High" : "Low"}">
+      <h4>Stored XSS Validation</h4>
+      <p><strong>Status:</strong> ${escapeHtml(storedXss.status || "Not available")}</p>
+      <p><strong>Impact:</strong> Stored XSS can affect every user who later views the injected record or page.</p>
+      <code>${escapeHtml(storedXssVectors.map((item) => `${item.vector} - ${item.tested_url}`).join("\n") || "No stored XSS detected in the tested low-risk forms")}</code>
+    </div>
+    <div class="finding-card" data-severity="${sqliVectors.length ? "High" : "Low"}">
+      <h4>SQL Injection Validation</h4>
+      <p><strong>Status:</strong> ${escapeHtml(sqlInjection.status || "Not available")}</p>
+      <p><strong>Impact:</strong> SQL injection can expose database content, modify records, or support authentication bypass and wider compromise.</p>
+      <code>${escapeHtml(sqliVectors.map((item) => `${item.vector} - ${item.tested_url} - ${item.evidence}`).join("\n") || "No SQL injection evidence detected in the tested low-risk flows")}</code>
     </div>
     <div class="finding-card" data-severity="${exposedPaths.length ? "Medium" : "Low"}">
       <h4>Sensitive Paths</h4>
@@ -415,6 +475,135 @@ function describeEvent(event) {
       return {
         title: "Application endpoint observed",
         detail: compactUrl(detail.url)
+      };
+    }
+  }
+
+  if (phase === "xss") {
+    if (message === "Testing reflected XSS via query parameter") {
+      return {
+        title: "XSS parameter test",
+        detail: `${detail.parameter || "query"} tested on ${compactUrl(detail.url)}`
+      };
+    }
+    if (message === "Testing reflected XSS via safe form") {
+      return {
+        title: "XSS form test",
+        detail: `${detail.form_method || "GET"} form tested on ${compactUrl(detail.url)}`
+      };
+    }
+    if (message === "Potential reflected XSS detected") {
+      return {
+        title: "Potential reflected XSS detected",
+        detail: `${detail.parameter || detail.form_action || "reflected input"} on ${compactUrl(detail.url)}`
+      };
+    }
+    if (message === "Potential reflected XSS detected after form submission") {
+      return {
+        title: "Potential reflected XSS detected",
+        detail: `Form response reflected HTML on ${compactUrl(detail.url)}`
+      };
+    }
+    if (message === "XSS query-parameter test skipped" || message === "XSS form test skipped") {
+      return {
+        title: "XSS test skipped",
+        detail: `${detail.error || "Scanner moved on to keep the assessment safe."}`
+      };
+    }
+  }
+
+  if (phase === "redirect") {
+    if (message === "Testing open redirect parameter") {
+      return {
+        title: "Open redirect test",
+        detail: `${detail.parameter || "redirect"} tested on ${compactUrl(detail.url)}`
+      };
+    }
+    if (message === "Testing open redirect form") {
+      return {
+        title: "Open redirect form test",
+        detail: `${detail.form_method || "GET"} redirect flow tested on ${compactUrl(detail.url)}`
+      };
+    }
+    if (message === "Potential open redirect detected") {
+      return {
+        title: "Potential open redirect detected",
+        detail: `${compactUrl(detail.url)} redirects to ${compactUrl(detail.redirect_target)}`
+      };
+    }
+    if (message === "Open redirect test skipped" || message === "Open redirect form test skipped") {
+      return {
+        title: "Open redirect test skipped",
+        detail: `${detail.error || "Scanner moved on to keep the assessment safe."}`
+      };
+    }
+  }
+
+  if (phase === "dom_xss") {
+    if (message === "Testing DOM-based XSS via URL fragment") {
+      return {
+        title: "DOM XSS test",
+        detail: `Fragment payload tested on ${compactUrl(detail.url)}`
+      };
+    }
+    if (message === "Potential DOM-based XSS detected") {
+      return {
+        title: "Potential DOM-based XSS detected",
+        detail: `${compactUrl(detail.url)} rendered fragment input into the DOM`
+      };
+    }
+    if (message === "DOM-based XSS test skipped") {
+      return {
+        title: "DOM XSS test skipped",
+        detail: `${detail.error || "Scanner moved on to keep the assessment safe."}`
+      };
+    }
+  }
+
+  if (phase === "stored_xss") {
+    if (message === "Testing stored XSS via low-risk form") {
+      return {
+        title: "Stored XSS test",
+        detail: `Low-risk form tested on ${compactUrl(detail.url)}`
+      };
+    }
+    if (message === "Potential stored XSS detected") {
+      return {
+        title: "Potential stored XSS detected",
+        detail: `${compactUrl(detail.url)} showed payload persistence after reload`
+      };
+    }
+    if (message === "Stored XSS test skipped") {
+      return {
+        title: "Stored XSS test skipped",
+        detail: `${detail.error || "Scanner moved on to keep the assessment safe."}`
+      };
+    }
+  }
+
+  if (phase === "sqli") {
+    if (message === "Testing SQL injection parameter") {
+      return {
+        title: "SQL injection test",
+        detail: `${detail.parameter || "parameter"} tested on ${compactUrl(detail.url)}`
+      };
+    }
+    if (message === "Testing SQL injection via safe form") {
+      return {
+        title: "SQL injection form test",
+        detail: `${detail.form_method || "GET"} form tested on ${compactUrl(detail.url)}`
+      };
+    }
+    if (message === "Potential SQL injection detected") {
+      return {
+        title: "Potential SQL injection detected",
+        detail: `${compactUrl(detail.url)} returned a database-style anomaly`
+      };
+    }
+    if (message === "SQL injection form test skipped") {
+      return {
+        title: "SQL injection test skipped",
+        detail: `${detail.error || "Scanner moved on to keep the assessment safe."}`
       };
     }
   }

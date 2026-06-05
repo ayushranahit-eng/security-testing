@@ -11,6 +11,12 @@ The current backend is a FastAPI service powered by Playwright.
 - Crawls internal pages from a target URL.
 - Discovers forms, inputs, buttons, and links.
 - Interacts with pages to reveal hidden workflows and API calls.
+- Scans first-party JavaScript for exposed secrets and tokens.
+- Tests redirect-style parameters for open redirect behavior.
+- Tests client-side fragment handling for DOM-based XSS behavior.
+- Tests low-risk parameters and forms for reflected XSS behavior.
+- Tests low-risk forms for stored XSS persistence behavior.
+- Tests low-risk parameters and safe form flows for SQL injection signals.
 - Checks required security headers.
 - Reviews cookie security flags.
 - Validates SSL/TLS certificate status.
@@ -38,9 +44,9 @@ security-testing/
 - `backend/main.py`: FastAPI app, scan endpoints, job tracking, downloads.
 - `backend/core/engine.py`: Main async scan workflow using Playwright.
 - `backend/core/reporter.py`: Readable JSON and text report generation.
-- `backend/scanner/`: Individual scanner checks for crawling, headers, cookies, SSL, CORS, sensitive paths, and interaction.
+- `backend/scanner/`: Individual scanner checks for crawling, headers, cookies, SSL, CORS, sensitive paths, JavaScript secret scanning, open redirect validation, DOM-based XSS validation, reflected XSS validation, stored XSS validation, SQL injection validation, and interaction.
 - `backend/config.py`: Default scan limits, timeouts, headers, test input values, and unsafe button skip rules.
 
 ## Current Stage
 
-The scanner already covers the reconnaissance and security misconfiguration layer. The next high-value additions would be active vulnerability checks such as JavaScript secret scanning, technology fingerprinting, SQL injection testing, and reflected XSS testing.
+The scanner now covers reconnaissance, security misconfiguration detection, and an initial active validation layer. The next high-value additions would be stronger authenticated testing, stored XSS coverage, deeper SQLi confirmation logic, technology fingerprinting, and library/CVE correlation.

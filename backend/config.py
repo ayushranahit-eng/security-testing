@@ -20,6 +20,40 @@ DEFAULT_CONFIG = {
     "max_pages": 20,
     "max_depth":  2,
 
+    # JavaScript secret scanning
+    "max_javascript_files": 25,
+    "max_inline_script_pages": 10,
+    "max_download_bytes_per_file": 500_000,
+
+    # Reflected XSS validation
+    "xss_marker_prefix": "hitxss",
+    "xss_payload_tag": "hit-xss-check",
+    "stored_xss_payload_tag": "hit-stored-xss",
+    "dom_xss_payload_tag": "hit-dom-xss",
+
+    # Open redirect validation
+    "open_redirect_test_url": "https://example.org/hit-open-redirect",
+    "open_redirect_parameter_names": [
+        "redirect", "redirect_url", "redirect_uri", "next", "return",
+        "returnurl", "return_url", "continue", "dest", "destination",
+        "url", "callback", "callbackurl", "redir",
+    ],
+
+    # SQL injection validation
+    "sqli_error_patterns": [
+        "sql syntax", "mysql", "warning: mysql", "unclosed quotation mark",
+        "quoted string not properly terminated", "postgresql", "pg_query",
+        "sqlite error", "sqliteexception", "sqlstate", "odbc sql",
+        "microsoft ole db provider for sql server", "ora-01756", "ora-00933",
+        "syntax error at or near", "you have an error in your sql syntax",
+    ],
+    "sqli_test_payloads": [
+        "'",
+        "\"",
+        "' OR '1'='1",
+    ],
+    "sqli_max_test_parameters": 3,
+
     # Security headers to verify
     "required_security_headers": [
         "content-security-policy",

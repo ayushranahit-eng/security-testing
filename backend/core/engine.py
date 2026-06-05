@@ -24,6 +24,12 @@ from scanner.crawler                import normalise_url, is_internal
 from scanner.headers                import check_headers
 from scanner.cookies                import analyse_cookies
 from scanner.ssl_check              import check_ssl, evaluate_ssl
+from scanner.javascript_secret_scanner import scan_javascript_secrets
+from scanner.dom_xss_scanner         import scan_dom_xss
+from scanner.open_redirect_scanner  import scan_open_redirect
+from scanner.reflected_xss_scanner  import scan_reflected_xss
+from scanner.stored_xss_scanner     import scan_stored_xss
+from scanner.sql_injection_scanner  import scan_sql_injection
 from scanner.sensitive_path_prober  import probe_sensitive_paths
 from scanner.cors_security_analyzer import analyze_cors_security
 
@@ -578,6 +584,12 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         "security_headers":          {},
         "cookies":                   [],
         "ssl":                       {},
+        "javascript_secrets":        {},
+        "dom_xss":                   [],
+        "open_redirect":             [],
+        "reflected_xss":             [],
+        "stored_xss":                [],
+        "sql_injection":             [],
         "sensitive_paths":           [],
         "cors_analysis":             {},
         "findings":                  [],
@@ -683,6 +695,51 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         for lnk in new_links - visited_pages:
             pending_pages.add((lnk, 1))
 
+        publish("Testing open redirects")
+        results["open_redirect"].extend(
+            await scan_open_redirect(page, start_url, cfg, progress)
+        )
+        publish(
+            "Open redirect testing complete",
+            open_redirect_findings=len(results["open_redirect"]),
+        )
+
+        publish("Testing DOM-based XSS")
+        results["dom_xss"].extend(
+            await scan_dom_xss(page, start_url, cfg, progress)
+        )
+        publish(
+            "DOM-based XSS testing complete",
+            dom_xss_findings=len(results["dom_xss"]),
+        )
+
+        publish("Testing reflected XSS")
+        results["reflected_xss"].extend(
+            await scan_reflected_xss(page, start_url, cfg, progress)
+        )
+        publish(
+            "Reflected XSS testing complete",
+            reflected_xss_findings=len(results["reflected_xss"]),
+        )
+
+        publish("Testing stored XSS")
+        results["stored_xss"].extend(
+            await scan_stored_xss(page, start_url, cfg, progress)
+        )
+        publish(
+            "Stored XSS testing complete",
+            stored_xss_findings=len(results["stored_xss"]),
+        )
+
+        publish("Testing SQL injection")
+        results["sql_injection"].extend(
+            await scan_sql_injection(page, start_url, cfg, progress)
+        )
+        publish(
+            "SQL injection testing complete",
+            sql_injection_findings=len(results["sql_injection"]),
+        )
+
         publish("Interacting with target page")
         inter_links = await _interact_async(
             page, start_url, results, api_calls,
@@ -725,6 +782,61 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
             for lnk in more_links - visited_pages:
                 pending_pages.add((lnk, depth + 1))
 
+            publish("Testing open redirects", current_url=next_url, current_depth=depth)
+            results["open_redirect"].extend(
+                await scan_open_redirect(page, next_url, cfg, progress)
+            )
+            publish(
+                "Open redirect testing complete",
+                current_url=next_url,
+                current_depth=depth,
+                open_redirect_findings=len(results["open_redirect"]),
+            )
+
+            publish("Testing DOM-based XSS", current_url=next_url, current_depth=depth)
+            results["dom_xss"].extend(
+                await scan_dom_xss(page, next_url, cfg, progress)
+            )
+            publish(
+                "DOM-based XSS testing complete",
+                current_url=next_url,
+                current_depth=depth,
+                dom_xss_findings=len(results["dom_xss"]),
+            )
+
+            publish("Testing reflected XSS", current_url=next_url, current_depth=depth)
+            results["reflected_xss"].extend(
+                await scan_reflected_xss(page, next_url, cfg, progress)
+            )
+            publish(
+                "Reflected XSS testing complete",
+                current_url=next_url,
+                current_depth=depth,
+                reflected_xss_findings=len(results["reflected_xss"]),
+            )
+
+            publish("Testing stored XSS", current_url=next_url, current_depth=depth)
+            results["stored_xss"].extend(
+                await scan_stored_xss(page, next_url, cfg, progress)
+            )
+            publish(
+                "Stored XSS testing complete",
+                current_url=next_url,
+                current_depth=depth,
+                stored_xss_findings=len(results["stored_xss"]),
+            )
+
+            publish("Testing SQL injection", current_url=next_url, current_depth=depth)
+            results["sql_injection"].extend(
+                await scan_sql_injection(page, next_url, cfg, progress)
+            )
+            publish(
+                "SQL injection testing complete",
+                current_url=next_url,
+                current_depth=depth,
+                sql_injection_findings=len(results["sql_injection"]),
+            )
+
             il = await _interact_async(
                 page, next_url, results, api_calls,
                 visited_pages, visited_states, cfg, progress
@@ -732,6 +844,61 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
             publish("Page interaction complete", current_url=next_url, current_depth=depth)
             for lnk in il - visited_pages:
                 pending_pages.add((lnk, depth + 1))
+
+        if results["open_redirect"]:
+            results["findings"].append({
+                "vulnerability": "Open Redirect",
+                "severity": "High",
+                "details": [
+                    f"{item['vector']} on {item['tested_url']}: {item['evidence']}"
+                    for item in results["open_redirect"][:12]
+                ],
+                "redirect_vectors": results["open_redirect"],
+            })
+
+        if results["dom_xss"]:
+            results["findings"].append({
+                "vulnerability": "DOM-Based XSS",
+                "severity": "High",
+                "details": [
+                    f"{item['vector']} on {item['tested_url']}: {item['evidence']}"
+                    for item in results["dom_xss"][:12]
+                ],
+                "dom_xss_vectors": results["dom_xss"],
+            })
+
+        if results["reflected_xss"]:
+            results["findings"].append({
+                "vulnerability": "Reflected XSS",
+                "severity": "High",
+                "details": [
+                    f"{item['vector']} on {item['tested_url']}: {item['evidence']}"
+                    for item in results["reflected_xss"][:12]
+                ],
+                "xss_vectors": results["reflected_xss"],
+            })
+
+        if results["stored_xss"]:
+            results["findings"].append({
+                "vulnerability": "Stored XSS",
+                "severity": "High",
+                "details": [
+                    f"{item['vector']} on {item['tested_url']}: {item['evidence']}"
+                    for item in results["stored_xss"][:12]
+                ],
+                "stored_xss_vectors": results["stored_xss"],
+            })
+
+        if results["sql_injection"]:
+            results["findings"].append({
+                "vulnerability": "SQL Injection",
+                "severity": "High",
+                "details": [
+                    f"{item['vector']} on {item['tested_url']}: {item['evidence']}"
+                    for item in results["sql_injection"][:12]
+                ],
+                "sqli_vectors": results["sql_injection"],
+            })
 
         # ── SSL (sync — no browser needed) ────────────────────────
         print("\n🔒 Validating SSL Certificate...")
@@ -760,6 +927,20 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         )
         publish("CORS analysis complete",
                 cors_issues_found=len(results["cors_analysis"].get("issues", [])))
+
+        print("\nScanning JavaScript for exposed secrets...")
+        publish("Scanning JavaScript for secrets")
+        results["javascript_secrets"] = scan_javascript_secrets(
+            start_url,
+            sorted(visited_pages),
+            sorted(api_calls),
+            results["findings"],
+            cfg,
+        )
+        publish(
+            "JavaScript secret scan complete",
+            javascript_secrets_found=len(results["javascript_secrets"].get("detections", [])),
+        )
 
         await browser.close()
 
