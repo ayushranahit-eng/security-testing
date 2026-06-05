@@ -19,17 +19,9 @@ ENV/
 # Playwright
 playwright-state.json
 
-# Backend output files
+# Output files (keep these local only)
 Output_Json_Files/
 Output_Text_Reports/
-backend/Output_Json_Files/
-backend/Output_Text_Reports/
-
-# Frontend dependencies/build output
-node_modules/
-.next/
-out/
-coverage/
 
 # Environment / secrets
 .env

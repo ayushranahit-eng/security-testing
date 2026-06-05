@@ -14,7 +14,7 @@ playwright install chromium
 ## Run locally
 
 ```bash
-# from the security-testing/ directory
+# from the security-testing/backend directory
 uvicorn main:app --reload --port 8000
 ```
 
@@ -130,18 +130,21 @@ When a scan completes, `/scan/status/{id}` returns structured, narrated JSON:
 
 ```
 security-testing/
-├── main.py              # FastAPI app + all endpoints
-├── config.py            # Default scan configuration
-├── models.py            # Pydantic request/response models
-├── requirements.txt
-├── .gitignore
-├── core/
-│   ├── engine.py        # Async scan orchestrator (Playwright)
-│   └── reporter.py      # Text report + readable JSON generator
-└── scanner/
-    ├── crawler.py       # Page crawling, link discovery, element collection
-    ├── interaction.py   # Form interaction engine
-    ├── headers.py       # Security headers checker
-    ├── cookies.py       # Cookie flag analyser
-    └── ssl_check.py     # SSL certificate checker
+├── backend/
+│   ├── main.py              # FastAPI app + all endpoints
+│   ├── config.py            # Default scan configuration
+│   ├── models.py            # Pydantic request/response models
+│   ├── requirements.txt
+│   ├── core/
+│   │   ├── engine.py        # Async scan orchestrator (Playwright)
+│   │   └── reporter.py      # Text report + readable JSON generator
+│   ├── scanner/
+│       ├── crawler.py       # Page crawling, link discovery, element collection
+│       ├── interaction.py   # Form interaction engine
+│       ├── headers.py       # Security headers checker
+│       ├── cookies.py       # Cookie flag analyser
+│       └── ssl_check.py     # SSL certificate checker
+│   └── tests/
+│       └── test_playwright.py
+└── frontend/                # Frontend app
 ```
