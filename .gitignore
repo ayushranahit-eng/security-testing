@@ -1,37 +1,12 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.Python
-*.egg
-*.egg-info/
-dist/
-build/
-.eggs/
-
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
-
-# Playwright
-playwright-state.json
-
-# Backend output files
-Output_Json_Files/
-Output_Text_Reports/
-backend/Output_Json_Files/
-backend/Output_Text_Reports/
-
 # Frontend dependencies/build output
-node_modules/
-.next/
-out/
-coverage/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+frontend/build/
+frontend/coverage/
 
-# Environment / secrets
+# Root-level environment / secrets
 .env
 .env.*
 *.env
@@ -45,11 +20,6 @@ coverage/
 # OS
 .DS_Store
 Thumbs.db
-
-# Pytest
-.pytest_cache/
-htmlcov/
-.coverage
 
 # Logs
 *.log
