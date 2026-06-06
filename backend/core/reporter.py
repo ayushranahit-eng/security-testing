@@ -33,9 +33,19 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
     target_url = data.get("target", "")
     findings = data.get("findings", [])
     api_analysis = _classify_network_calls(target_url, data.get("api_calls", []))
+    auth_surface_analysis = _analyze_auth_surface(data.get("auth_surface", {}))
     sensitive_analysis = _analyze_sensitive_paths(data.get("sensitive_paths", []))
     cookie_analysis = _analyze_cookies(data.get("cookies", []))
+    http_method_analysis = _analyze_http_methods(data.get("http_methods", {}))
     js_secret_analysis = _analyze_javascript_secrets(data.get("javascript_secrets", {}))
+    technology_analysis = _analyze_technology(data.get("technology_fingerprint", {}))
+    graphql_analysis = _analyze_graphql(data.get("graphql", {}))
+    api_rate_limit_analysis = _analyze_rate_limits(data.get("api_rate_limiting", {}))
+    csrf_analysis = _analyze_csrf(data.get("csrf", {}))
+    source_map_analysis = _analyze_source_maps(data.get("source_maps", {}))
+    directory_listing_analysis = _analyze_directory_listing(data.get("directory_listing", {}))
+    forced_browsing_analysis = _analyze_forced_browsing(data.get("forced_browsing", {}))
+    verbose_error_analysis = _analyze_verbose_errors(data.get("verbose_errors", {}))
     dom_xss_analysis = _analyze_dom_xss(data.get("dom_xss", []))
     open_redirect_analysis = _analyze_open_redirect(data.get("open_redirect", []))
     reflected_xss_analysis = _analyze_reflected_xss(data.get("reflected_xss", []))
@@ -49,6 +59,12 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
             "target": target_url,
             "scan_completed_at": scan_time,
             "status": "completed",
+            "coverage": {
+                "scan_mode": "unauthenticated_public",
+                "auth_surface_detected": auth_surface_analysis["auth_detected"],
+                "classification": auth_surface_analysis["classification"],
+                "note": auth_surface_analysis["note"],
+            },
         },
         "executive_summary": {
             "risk_rating": _overall_risk(counts, sensitive_analysis),
@@ -64,9 +80,19 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
             "top_risks": finding_analysis["top_risks"],
             "summary": _executive_summary_text(
                 counts,
+                auth_surface_analysis,
                 sensitive_analysis,
                 cookie_analysis,
+                http_method_analysis,
                 js_secret_analysis,
+                technology_analysis,
+                graphql_analysis,
+                api_rate_limit_analysis,
+                csrf_analysis,
+                source_map_analysis,
+                directory_listing_analysis,
+                forced_browsing_analysis,
+                verbose_error_analysis,
                 dom_xss_analysis,
                 open_redirect_analysis,
                 reflected_xss_analysis,
@@ -83,10 +109,20 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
             "network": api_analysis,
         },
         "security_analysis": {
+            "auth_surface": auth_surface_analysis,
             "headers": _analyze_headers(data.get("security_headers", {})),
             "ssl": _analyze_ssl(data.get("ssl", {})),
             "cookies": cookie_analysis,
+            "http_methods": http_method_analysis,
             "javascript_secrets": js_secret_analysis,
+            "technology": technology_analysis,
+            "graphql": graphql_analysis,
+            "api_rate_limiting": api_rate_limit_analysis,
+            "csrf": csrf_analysis,
+            "source_maps": source_map_analysis,
+            "directory_listing": directory_listing_analysis,
+            "forced_browsing": forced_browsing_analysis,
+            "verbose_errors": verbose_error_analysis,
             "dom_xss": dom_xss_analysis,
             "open_redirect": open_redirect_analysis,
             "reflected_xss": reflected_xss_analysis,
@@ -108,9 +144,19 @@ def generate_text_report(data: dict, scan_time: str) -> str:
     target_url = data.get("target", "")
     findings = data.get("findings", [])
     api_analysis = _classify_network_calls(target_url, data.get("api_calls", []))
+    auth_surface_analysis = _analyze_auth_surface(data.get("auth_surface", {}))
     sensitive_analysis = _analyze_sensitive_paths(data.get("sensitive_paths", []))
     cookie_analysis = _analyze_cookies(data.get("cookies", []))
+    http_method_analysis = _analyze_http_methods(data.get("http_methods", {}))
     js_secret_analysis = _analyze_javascript_secrets(data.get("javascript_secrets", {}))
+    technology_analysis = _analyze_technology(data.get("technology_fingerprint", {}))
+    graphql_analysis = _analyze_graphql(data.get("graphql", {}))
+    api_rate_limit_analysis = _analyze_rate_limits(data.get("api_rate_limiting", {}))
+    csrf_analysis = _analyze_csrf(data.get("csrf", {}))
+    source_map_analysis = _analyze_source_maps(data.get("source_maps", {}))
+    directory_listing_analysis = _analyze_directory_listing(data.get("directory_listing", {}))
+    forced_browsing_analysis = _analyze_forced_browsing(data.get("forced_browsing", {}))
+    verbose_error_analysis = _analyze_verbose_errors(data.get("verbose_errors", {}))
     dom_xss_analysis = _analyze_dom_xss(data.get("dom_xss", []))
     open_redirect_analysis = _analyze_open_redirect(data.get("open_redirect", []))
     reflected_xss_analysis = _analyze_reflected_xss(data.get("reflected_xss", []))
@@ -145,9 +191,19 @@ def generate_text_report(data: dict, scan_time: str) -> str:
     for line in _wrap(
         _executive_summary_text(
             counts,
+            auth_surface_analysis,
             sensitive_analysis,
             cookie_analysis,
+            http_method_analysis,
             js_secret_analysis,
+            technology_analysis,
+            graphql_analysis,
+            api_rate_limit_analysis,
+            csrf_analysis,
+            source_map_analysis,
+            directory_listing_analysis,
+            forced_browsing_analysis,
+            verbose_error_analysis,
             dom_xss_analysis,
             open_redirect_analysis,
             reflected_xss_analysis,
@@ -196,6 +252,16 @@ def generate_text_report(data: dict, scan_time: str) -> str:
     add(f"Tracking/analytics   : {api_analysis['counts']['tracking_or_analytics']}")
     add(f"Other third-party    : {api_analysis['counts']['other_third_party']}")
     add("")
+    add("AUTHENTICATION COVERAGE")
+    add(sep2)
+    add(f"Status      : {auth_surface_analysis['status']}")
+    add(f"Scan mode   : Unauthenticated public scan")
+    add(f"Assessment  : {auth_surface_analysis['note']}")
+    if auth_surface_analysis["signals"]:
+        add("Auth-related signals:")
+        for signal in auth_surface_analysis["signals"][:8]:
+            add(f"  - {signal['type']}: {signal['value']}")
+    add("")
     if api_analysis["first_party_api"]:
         add("First-party API-like samples:")
         for call in api_analysis["first_party_api"][:10]:
@@ -215,6 +281,9 @@ def generate_text_report(data: dict, scan_time: str) -> str:
     add(f"Cookies : {cookie_analysis['status']}")
     for item in cookie_analysis["notable_cookies"][:8]:
         add(f"  - {item['name']} [{item['category']}]: {item['risk']} - {item['issue_summary']}")
+    add(f"HTTP methods : {http_method_analysis['status']}")
+    add(f"Technology   : {technology_analysis['status']}")
+    add(f"Auth surface : {auth_surface_analysis['status']}")
     add("")
 
     add("ACTIVE VALIDATION")
@@ -223,6 +292,13 @@ def generate_text_report(data: dict, scan_time: str) -> str:
     add(f"JS files scanned       : {js_secret_analysis['scanned_files']}")
     for item in js_secret_analysis["top_detections"][:8]:
         add(f"  - [{item['severity']}] {item['type']} in {item['source']}: {item['value_preview']}")
+    add(f"GraphQL introspection  : {graphql_analysis['status']}")
+    add(f"API rate limiting      : {api_rate_limit_analysis['status']}")
+    add(f"CSRF risk              : {csrf_analysis['status']}")
+    add(f"Source map exposure    : {source_map_analysis['status']}")
+    add(f"Directory listing      : {directory_listing_analysis['status']}")
+    add(f"Forced browsing        : {forced_browsing_analysis['status']}")
+    add(f"Verbose errors         : {verbose_error_analysis['status']}")
     add(f"DOM-based XSS testing  : {dom_xss_analysis['status']}")
     add(f"DOM XSS vectors found  : {dom_xss_analysis['count']}")
     for item in dom_xss_analysis["vectors"][:8]:
@@ -321,9 +397,19 @@ def _overall_risk(counts: dict, sensitive_analysis: dict) -> str:
 
 def _executive_summary_text(
     counts: dict,
+    auth_surface_analysis: dict,
     sensitive_analysis: dict,
     cookie_analysis: dict,
+    http_method_analysis: dict,
     js_secret_analysis: dict,
+    technology_analysis: dict,
+    graphql_analysis: dict,
+    api_rate_limit_analysis: dict,
+    csrf_analysis: dict,
+    source_map_analysis: dict,
+    directory_listing_analysis: dict,
+    forced_browsing_analysis: dict,
+    verbose_error_analysis: dict,
     dom_xss_analysis: dict,
     open_redirect_analysis: dict,
     reflected_xss_analysis: dict,
@@ -335,6 +421,14 @@ def _executive_summary_text(
     cookie_issues = len(cookie_analysis.get("notable_cookies", []))
 
     parts = []
+    if auth_surface_analysis.get("auth_detected"):
+        parts.append(
+            "Authentication-related functionality was detected, but this assessment was performed without valid credentials. Public attack surface and auth-boundary checks were reviewed, while internal authenticated workflows were not tested."
+        )
+    else:
+        parts.append(
+            "No obvious authentication surface was detected in the scanned public scope, so this assessment primarily reflects public-facing exposure."
+        )
     if exposed:
         parts.append(
             f"{exposed} sensitive path(s) returned readable content. These should be reviewed first because they may expose configuration, dependency, or application metadata."
@@ -343,10 +437,26 @@ def _executive_summary_text(
         parts.append(
             f"{blocked} sensitive path(s) returned blocked responses. Treat these as detection signals, not confirmed exposure."
         )
+    if http_method_analysis.get("trace_enabled"):
+        parts.append("HTTP TRACE appears enabled. Review unnecessary HTTP methods and restrict anything not required.")
     if js_secret_analysis.get("count", 0):
         parts.append(
             f"{js_secret_analysis['count']} JavaScript secret exposure(s) were detected. Treat any live key or token in frontend code as immediately actionable."
         )
+    if graphql_analysis.get("count", 0):
+        parts.append("GraphQL introspection is exposed on at least one endpoint. Review whether schema visibility is intentional for this environment.")
+    if api_rate_limit_analysis.get("status") == "No throttling observed":
+        parts.append("No clear API throttling was observed on the tested endpoint. Review brute-force and scraping defenses.")
+    if csrf_analysis.get("count", 0):
+        parts.append("POST forms without obvious CSRF tokens were detected. Validate anti-CSRF controls in authenticated workflows.")
+    if source_map_analysis.get("count", 0):
+        parts.append("JavaScript source maps were publicly accessible. These can expose original source and implementation detail.")
+    if directory_listing_analysis.get("count", 0):
+        parts.append("Directory listing was detected on at least one path, which can disclose internal file structure.")
+    if forced_browsing_analysis.get("count", 0):
+        parts.append("Unlinked or sensitive-looking paths were reachable directly. Review access control and route exposure.")
+    if verbose_error_analysis.get("count", 0):
+        parts.append("Verbose error handling was observed. Stack traces or exception details can help attackers fingerprint the application.")
     if dom_xss_analysis.get("count", 0):
         parts.append(
             f"{dom_xss_analysis['count']} DOM-based XSS path(s) were detected from client-side rendering of attacker-controlled fragment input."
@@ -612,6 +722,106 @@ def _analyze_javascript_secrets(scan_result: dict) -> dict:
     }
 
 
+def _analyze_http_methods(result: dict) -> dict:
+    return {
+        "status": result.get("status", "Not run"),
+        "allow_methods": result.get("allow_methods", []),
+        "dangerous_methods": result.get("dangerous_methods", []),
+        "trace_enabled": bool(result.get("trace_enabled")),
+        "trace_status": result.get("trace_status"),
+    }
+
+
+def _analyze_auth_surface(result: dict) -> dict:
+    signals = result.get("signals", [])
+    return {
+        "status": result.get("status", "Not run"),
+        "auth_detected": bool(result.get("auth_detected")),
+        "classification": result.get("classification", "unknown"),
+        "count": len(signals),
+        "signals": signals,
+        "note": result.get(
+            "note",
+            "Authentication surface classification was not available.",
+        ),
+    }
+
+
+def _analyze_technology(result: dict) -> dict:
+    detected = result.get("detected", [])
+    return {
+        "status": result.get("status", "Not run"),
+        "count": len(detected),
+        "detected": detected,
+        "note": result.get("note", "Technology fingerprinting was not available."),
+    }
+
+
+def _analyze_graphql(result: dict) -> dict:
+    exposed = result.get("exposed_endpoints", [])
+    return {
+        "status": result.get("status", "Not run"),
+        "count": len(exposed),
+        "exposed_endpoints": exposed,
+    }
+
+
+def _analyze_rate_limits(result: dict) -> dict:
+    return {
+        "status": result.get("status", "Not run"),
+        "tested_endpoint": result.get("tested_endpoint"),
+        "statuses": result.get("statuses", []),
+        "throttled": bool(result.get("throttled")),
+    }
+
+
+def _analyze_csrf(result: dict) -> dict:
+    forms = result.get("post_forms_without_token", [])
+    return {
+        "status": result.get("status", "Not run"),
+        "count": len(forms),
+        "forms": forms,
+        "cookies_observed": result.get("cookies_observed", 0),
+        "note": result.get("note", "CSRF analysis was not available."),
+    }
+
+
+def _analyze_source_maps(result: dict) -> dict:
+    maps = result.get("exposed_maps", [])
+    return {
+        "status": result.get("status", "Not run"),
+        "count": len(maps),
+        "maps": maps,
+    }
+
+
+def _analyze_directory_listing(result: dict) -> dict:
+    items = result.get("exposed_directories", [])
+    return {
+        "status": result.get("status", "Not run"),
+        "count": len(items),
+        "directories": items,
+    }
+
+
+def _analyze_forced_browsing(result: dict) -> dict:
+    hits = result.get("hits", [])
+    return {
+        "status": result.get("status", "Not run"),
+        "count": len(hits),
+        "hits": hits,
+    }
+
+
+def _analyze_verbose_errors(result: dict) -> dict:
+    evidence = result.get("evidence", [])
+    return {
+        "status": result.get("status", "Not run"),
+        "count": len(evidence),
+        "evidence": evidence,
+    }
+
+
 def _analyze_reflected_xss(vectors: list) -> dict:
     return {
         "status": "Potential reflected XSS detected" if vectors else "No reflected XSS detected in the tested flows",
@@ -867,6 +1077,31 @@ def _enrich_finding(finding: dict) -> dict:
             "raw": finding,
         }
 
+    if vuln == "HTTP Methods Enabled":
+        methods = finding.get("methods", [])
+        return {
+            "title": "Risky HTTP methods advertised",
+            "severity": severity,
+            "priority": "P3",
+            "confidence": "High",
+            "impact": "Unnecessary HTTP methods can increase attack surface or suggest weak request handling on the origin.",
+            "evidence_summary": ", ".join(methods) if methods else "; ".join(details),
+            "remediation": "Restrict allowed methods to only what the application requires and deny TRACE, PUT, DELETE, and PATCH where they are not needed.",
+            "raw": finding,
+        }
+
+    if vuln == "HTTP TRACE Enabled":
+        return {
+            "title": "HTTP TRACE appears enabled",
+            "severity": severity,
+            "priority": "P3",
+            "confidence": "High",
+            "impact": "TRACE can support legacy cross-site tracing abuse and is usually unnecessary on public applications.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Disable TRACE at the web server, proxy, or CDN layer unless there is a specific operational requirement.",
+            "raw": finding,
+        }
+
     if vuln == "SQL Injection":
         vectors = finding.get("sqli_vectors", [])
         return {
@@ -899,6 +1134,90 @@ def _enrich_finding(finding: dict) -> dict:
             "raw": finding,
         }
 
+    if vuln == "Verbose Error Messages":
+        return {
+            "title": "Verbose error handling observed",
+            "severity": severity,
+            "priority": "P3",
+            "confidence": "Medium",
+            "impact": "Stack traces, filesystem paths, SQL errors, or framework exceptions can help attackers fingerprint the application and refine exploit attempts.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Return generic production error pages, suppress stack traces in responses, and route detailed exceptions only to internal logs.",
+            "raw": finding,
+        }
+
+    if vuln == "GraphQL Introspection":
+        return {
+            "title": "GraphQL introspection exposed",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "High",
+            "impact": "Exposed schema metadata can reveal object types, operations, and internal API structure that helps attackers map the application faster.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Disable GraphQL introspection in production where possible or restrict access to trusted users and environments.",
+            "raw": finding,
+        }
+
+    if vuln == "API Rate Limiting Absent":
+        return {
+            "title": "No clear API throttling observed",
+            "severity": severity,
+            "priority": "P3",
+            "confidence": "Low",
+            "impact": "Weak or absent rate limiting can make brute force, scraping, or automated abuse easier on public APIs.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Apply rate limits, anomaly detection, and challenge controls on sensitive or high-value API endpoints.",
+            "raw": finding,
+        }
+
+    if vuln == "CSRF":
+        return {
+            "title": "Potential CSRF risk detected",
+            "severity": severity,
+            "priority": "P2",
+            "confidence": "Medium",
+            "impact": "Authenticated users may be tricked into submitting unintended state-changing requests if anti-CSRF controls are weak or missing.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Use anti-CSRF tokens, verify Origin or Referer where appropriate, and combine with SameSite protections for session cookies.",
+            "raw": finding,
+        }
+
+    if vuln == "JavaScript Source Maps":
+        return {
+            "title": "JavaScript source maps exposed",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "High",
+            "impact": "Source maps can reveal original client-side code, internal comments, variable names, and implementation details that aid attackers.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Remove public source maps in production or restrict access to trusted users and debugging environments.",
+            "raw": finding,
+        }
+
+    if vuln == "Directory Listing Enabled":
+        return {
+            "title": "Directory listing enabled",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "High",
+            "impact": "Directory indexes can expose internal file structure, backups, assets, and forgotten files that were not meant for public browsing.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Disable auto-indexing on the web server and serve explicit index files or deny directory browsing.",
+            "raw": finding,
+        }
+
+    if vuln == "Forced Browsing":
+        return {
+            "title": "Unlinked path accessible directly",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "Medium",
+            "impact": "Directly reachable but unlinked routes can expose administrative, debug, or internal functionality that normal navigation does not reveal.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Review each exposed route, remove unused paths, and enforce authentication or authorization where required.",
+            "raw": finding,
+        }
+
     if "CORS" in vuln:
         return {
             "title": "CORS policy observation",
@@ -925,14 +1244,33 @@ def _enrich_finding(finding: dict) -> dict:
 
 def _generate_next_steps(findings: list, data: dict, api_analysis: dict, sensitive_analysis: dict) -> dict:
     steps = []
+    auth_surface = _analyze_auth_surface(data.get("auth_surface", {}))
+    if auth_surface.get("auth_detected"):
+        steps.append("Run an authenticated scan with test credentials before treating this application as fully assessed; public-only testing stops at the login boundary.")
     if sensitive_analysis.get("exposed_paths"):
         steps.append("Review readable sensitive paths first; remove or restrict anything exposing dependency, config, or source metadata.")
     if any(f.get("vulnerability") == "Missing Security Headers" for f in findings):
         steps.append("Implement missing security headers at the web server, CDN, or application middleware layer.")
     if any("Cookie" in f.get("vulnerability", "") for f in findings):
         steps.append("Separate third-party cookies from real auth/session cookies, then harden session cookies with Secure, HttpOnly, and SameSite.")
+    if any(f.get("vulnerability") == "HTTP TRACE Enabled" for f in findings):
+        steps.append("Disable HTTP TRACE and review unnecessary advertised methods on the public origin.")
     if any(f.get("vulnerability") == "JavaScript Secrets Exposed" for f in findings):
         steps.append("Rotate any exposed API keys or tokens immediately and move privileged secrets out of frontend JavaScript.")
+    if any(f.get("vulnerability") == "GraphQL Introspection" for f in findings):
+        steps.append("Review GraphQL production exposure and disable introspection where it is not intentionally required.")
+    if any(f.get("vulnerability") == "API Rate Limiting Absent" for f in findings):
+        steps.append("Apply throttling and abuse controls to exposed API endpoints, especially authentication and enumeration-sensitive routes.")
+    if any(f.get("vulnerability") == "CSRF" for f in findings):
+        steps.append("Review state-changing forms for anti-CSRF tokens and pair them with stricter SameSite and origin validation controls.")
+    if any(f.get("vulnerability") == "JavaScript Source Maps" for f in findings):
+        steps.append("Remove production source maps or restrict them to internal debugging access only.")
+    if any(f.get("vulnerability") == "Directory Listing Enabled" for f in findings):
+        steps.append("Disable web-server directory indexing and verify no sensitive files are browsable directly.")
+    if any(f.get("vulnerability") == "Forced Browsing" for f in findings):
+        steps.append("Review unlinked but reachable routes and enforce authentication or route removal where appropriate.")
+    if any(f.get("vulnerability") == "Verbose Error Messages" for f in findings):
+        steps.append("Replace verbose error responses with generic production-safe messages and keep detail in internal logs only.")
     if any(f.get("vulnerability") == "DOM-Based XSS" for f in findings):
         steps.append("Patch DOM-based XSS by removing unsafe client-side sinks and sanitizing fragment or URL-derived input before rendering.")
     if any(f.get("vulnerability") == "Open Redirect" for f in findings):

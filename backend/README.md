@@ -38,6 +38,7 @@ Swagger UI → `http://localhost:8000/docs`
 |-------|---------|-------------|
 | `readable` | `true` | Engineer-readable JSON with commentary and next steps |
 | `download` | `false` | Download the `.txt` report file instead |
+| `pdf` | `false` | Download the backend-generated `.pdf` report |
 
 ### One-shot (blocking) endpoints
 
@@ -46,6 +47,7 @@ Swagger UI → `http://localhost:8000/docs`
 | POST | `/scan` | Alias for `/scan/start` |
 | POST | `/scan/download` | Run scan, download `.json` file |
 | POST | `/scan/report` | Run scan, download `.txt` report |
+| POST | `/scan/report/pdf` | Run scan, download `.pdf` report |
 
 ### Micro-checks (fast, no browser)
 
@@ -87,7 +89,10 @@ curl http://localhost:8000/scan/status/abc123
 # 3. Download the text report
 curl http://localhost:8000/scan/status/abc123?download=true -o report.txt
 
-# 4. Get raw JSON data
+# 4. Download the PDF report
+curl http://localhost:8000/scan/status/abc123?pdf=true -o report.pdf
+
+# 5. Get raw JSON data
 curl http://localhost:8000/scan/status/abc123?readable=false
 ```
 

@@ -22,16 +22,26 @@ from playwright.async_api import async_playwright
 
 from scanner.crawler                import normalise_url, is_internal
 from scanner.headers                import check_headers
+from scanner.auth_surface_detector  import detect_auth_surface
 from scanner.cookies                import analyse_cookies
 from scanner.ssl_check              import check_ssl, evaluate_ssl
+from scanner.http_method_analyzer   import analyze_http_methods
 from scanner.javascript_secret_scanner import scan_javascript_secrets
 from scanner.dom_xss_scanner         import scan_dom_xss
+from scanner.directory_listing_scanner import scan_directory_listing
+from scanner.forced_browsing_scanner import scan_forced_browsing
+from scanner.graphql_introspection_scanner import scan_graphql_introspection
 from scanner.open_redirect_scanner  import scan_open_redirect
 from scanner.reflected_xss_scanner  import scan_reflected_xss
+from scanner.source_map_scanner     import scan_source_maps
 from scanner.stored_xss_scanner     import scan_stored_xss
 from scanner.sql_injection_scanner  import scan_sql_injection
+from scanner.technology_fingerprinter import fingerprint_technology
+from scanner.api_rate_limit_scanner import scan_api_rate_limits
+from scanner.csrf_scanner           import analyze_csrf_risk
 from scanner.sensitive_path_prober  import probe_sensitive_paths
 from scanner.cors_security_analyzer import analyze_cors_security
+from scanner.verbose_error_scanner  import scan_verbose_errors
 
 
 def _emit_progress(progress, current_step: str, **metrics) -> None:
@@ -277,6 +287,21 @@ SCORE_ALL_JS = """
 ELEM_TO = 3_000
 
 
+async def _is_usable_element(locator) -> bool:
+    try:
+        if not await locator.is_visible():
+            return False
+        if not await locator.is_enabled():
+            return False
+        if await locator.get_attribute("disabled") is not None:
+            return False
+        if await locator.get_attribute("readonly") is not None:
+            return False
+        return True
+    except Exception:
+        return False
+
+
 async def _interact_async(page, url: str, results: dict,
                            api_calls: set, visited_pages: set,
                            visited_states: set, cfg: dict,
@@ -343,13 +368,16 @@ async def _interact_async(page, url: str, results: dict,
                      (await inp.get_attribute("name")) or
                      (await inp.get_attribute("placeholder")) or itype)
 
+            if itype not in ("hidden", "button", "submit", "reset", "image"):
+                if not await _is_usable_element(inp):
+                    continue
+
             if itype == "checkbox":
                 try:
                     await page.evaluate("el => el.click()", await inp.element_handle())
                     _emit_event(progress, "info", "interaction", "Checkbox clicked", url=url, field=iid)
                     print(f"      ☑️  Clicked checkbox '{iid}'")
                 except Exception as e:
-                    _emit_event(progress, "warning", "interaction", "Checkbox skipped", url=url, field=iid, error=str(e))
                     print(f"      ⚠️  Checkbox '{iid}' skipped: {e}")
 
             elif itype == "radio":
@@ -361,7 +389,6 @@ async def _interact_async(page, url: str, results: dict,
                         _emit_event(progress, "info", "interaction", "Radio selected", url=url, field=iid, group=group)
                         print(f"      🔘 Radio '{iid}' (group '{group}')")
                     except Exception as e:
-                        _emit_event(progress, "warning", "interaction", "Radio skipped", url=url, field=iid, group=group, error=str(e))
                         print(f"      ⚠️  Radio '{iid}' skipped: {e}")
 
             elif itype == "file":
@@ -370,7 +397,6 @@ async def _interact_async(page, url: str, results: dict,
                     _emit_event(progress, "info", "interaction", "File uploaded", url=url, field=iid)
                     print(f"      📎 Uploaded file to '{iid}'")
                 except Exception as e:
-                    _emit_event(progress, "warning", "interaction", "File input skipped", url=url, field=iid, error=str(e))
                     print(f"      ⚠️  File '{iid}' skipped: {e}")
 
             elif itype in ("hidden","button","submit","reset","image"):
@@ -379,7 +405,7 @@ async def _interact_async(page, url: str, results: dict,
             else:
                 val = tv.get(itype) or tv.get("text", "test")
                 try:
-                    await inp.fill(str(val), timeout=ELEM_TO)
+                    await inp.fill(str(val), timeout=1_200)
                     _emit_event(
                         progress,
                         "info",
@@ -392,7 +418,6 @@ async def _interact_async(page, url: str, results: dict,
                     )
                     print(f"      ✍️  Filled [{itype}] '{iid}' → '{val}'")
                 except Exception as e:
-                    _emit_event(progress, "warning", "interaction", "Input skipped", url=url, field=iid, input_type=itype, error=str(e))
                     print(f"      ⚠️  Input '{iid}' skipped: {e}")
 
         except Exception as e:
@@ -402,11 +427,13 @@ async def _interact_async(page, url: str, results: dict,
     try:
         for ta in await page.locator("textarea").all():
             try:
+                if not await _is_usable_element(ta):
+                    continue
                 ta_id = ((await ta.get_attribute("id")) or
                          (await ta.get_attribute("name")) or "textarea")
                 val = tv.get("textarea", "Test content")
-                await ta.scroll_into_view_if_needed(timeout=ELEM_TO)
-                await ta.fill(val, timeout=ELEM_TO)
+                await ta.scroll_into_view_if_needed(timeout=1_000)
+                await ta.fill(val, timeout=1_200)
                 _emit_event(progress, "info", "interaction", "Textarea filled", url=url, field=ta_id, value=val)
                 print(f"      ✍️  Filled [textarea] '{ta_id}' → '{val}'")
             except Exception as e:
@@ -418,6 +445,8 @@ async def _interact_async(page, url: str, results: dict,
     try:
         for sel in await page.locator("select").all():
             try:
+                if not await _is_usable_element(sel):
+                    continue
                 sel_id = ((await sel.get_attribute("id")) or
                           (await sel.get_attribute("name")) or "select")
                 chosen = None
@@ -427,7 +456,7 @@ async def _interact_async(page, url: str, results: dict,
                         chosen = v
                         break
                 if chosen:
-                    await sel.select_option(chosen, timeout=ELEM_TO)
+                    await sel.select_option(chosen, timeout=1_200)
                     _emit_event(progress, "info", "interaction", "Select option chosen", url=url, field=sel_id, value=chosen)
                     print(f"      📋 Select '{sel_id}' → '{chosen}'")
             except Exception as e:
@@ -457,6 +486,9 @@ async def _interact_async(page, url: str, results: dict,
 
     print(f"      🔎 Found {len(all_btns)} button(s) on page")
 
+    max_button_interactions = 6
+    buttons_attempted = 0
+
     for item in button_scores:
         idx      = item.get("idx", -1)
         score    = item.get("score", 0)
@@ -470,11 +502,17 @@ async def _interact_async(page, url: str, results: dict,
             continue
         if idx < 0 or idx >= len(all_btns):
             continue
+        if buttons_attempted >= max_button_interactions:
+            print(f"      ℹ️  Button interaction cap reached on {url}")
+            break
 
         btn = all_btns[idx]
         try:
+            if not await _is_usable_element(btn):
+                continue
             api_before   = set(api_calls)
             state_before = await _page_state_hash_async(page)
+            buttons_attempted += 1
 
             print(f"      🖱️  Clicking button: '{raw_text}' (score={score})")
 
@@ -482,14 +520,14 @@ async def _interact_async(page, url: str, results: dict,
 
             clicked = False
             try:
-                await btn.scroll_into_view_if_needed(timeout=3_000)
-                await btn.click(timeout=5_000)
+                await btn.scroll_into_view_if_needed(timeout=1_000)
+                await btn.click(timeout=1_500)
                 clicked = True
                 _emit_event(progress, "info", "interaction", "Button clicked", url=url, button=raw_text)
             except Exception as e1:
                 print(f"         ⚠️  Normal click failed: {e1}")
                 try:
-                    await btn.click(force=True, timeout=5_000)
+                    await btn.click(force=True, timeout=1_200)
                     clicked = True
                     _emit_event(progress, "info", "interaction", "Force button click succeeded", url=url, button=raw_text)
                     print(f"         ✅ Force click succeeded")
@@ -508,8 +546,9 @@ async def _interact_async(page, url: str, results: dict,
 
             new_calls = api_calls - api_before
             for call in sorted(new_calls):
-                _emit_event(progress, "info", "api", "API request discovered after button click", url=call, button=raw_text)
-                print(f"      📡 New API [after '{raw_text}']: {call}")
+                if is_internal(url, call):
+                    _emit_event(progress, "info", "api", "API request discovered after button click", url=call, button=raw_text)
+                    print(f"      📡 New API [after '{raw_text}']: {call}")
             reported_apis = set(api_calls)
 
             state_after = await _page_state_hash_async(page)
@@ -583,8 +622,18 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         "api_calls":                 [],
         "security_headers":          {},
         "cookies":                   [],
+        "auth_surface":              {},
         "ssl":                       {},
+        "http_methods":              {},
         "javascript_secrets":        {},
+        "technology_fingerprint":    {},
+        "graphql":                   {},
+        "api_rate_limiting":         {},
+        "csrf":                      {},
+        "source_maps":               {},
+        "directory_listing":         {},
+        "forced_browsing":           {},
+        "verbose_errors":            {},
         "dom_xss":                   [],
         "open_redirect":             [],
         "reflected_xss":             [],
@@ -630,15 +679,16 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
 
         def track_request(req):
             if req.url not in api_calls:
-                _emit_event(
-                    progress,
-                    "info",
-                    "network",
-                    "Request finished",
-                    url=req.url,
-                    method=req.method,
-                    resource_type=req.resource_type,
-                )
+                if is_internal(start_url, req.url):
+                    _emit_event(
+                        progress,
+                        "info",
+                        "network",
+                        "Request finished",
+                        url=req.url,
+                        method=req.method,
+                        resource_type=req.resource_type,
+                    )
             api_calls.add(req.url)
 
         page.on("requestfinished", track_request)
@@ -665,6 +715,7 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         print("✅ Website loaded successfully")
         visited_pages.add(start_url)
         publish("Target page loaded")
+        initial_html = await page.content()
 
         init_state = await _page_state_hash_async(page)
         if init_state:
@@ -694,6 +745,17 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         publish("Initial elements discovered")
         for lnk in new_links - visited_pages:
             pending_pages.add((lnk, 1))
+
+        publish("Detecting authentication surface")
+        results["auth_surface"] = detect_auth_surface(
+            start_url,
+            sorted(visited_pages),
+            results["forms"],
+            results["inputs"],
+            results["buttons"],
+            sorted(api_calls),
+        )
+        publish("Authentication surface detection complete")
 
         publish("Testing open redirects")
         results["open_redirect"].extend(
@@ -900,8 +962,26 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
                 "sqli_vectors": results["sql_injection"],
             })
 
+        publish("Refreshing authentication surface classification")
+        results["auth_surface"] = detect_auth_surface(
+            start_url,
+            sorted(visited_pages),
+            results["forms"],
+            results["inputs"],
+            results["buttons"],
+            sorted(api_calls),
+        )
+        publish("Authentication coverage classification complete")
+
         # ── SSL (sync — no browser needed) ────────────────────────
         print("\n🔒 Validating SSL Certificate...")
+        print("\nInspecting HTTP methods...")
+        publish("Checking HTTP methods")
+        results["http_methods"] = analyze_http_methods(
+            start_url, results["findings"], cfg
+        )
+        publish("HTTP methods checked")
+
         publish("Validating SSL certificate")
         results["ssl"] = check_ssl(start_url)
         evaluate_ssl(results["ssl"], results["findings"])
@@ -928,6 +1008,32 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         publish("CORS analysis complete",
                 cors_issues_found=len(results["cors_analysis"].get("issues", [])))
 
+        print("\nReviewing CSRF risk indicators...")
+        publish("Analyzing CSRF risk")
+        results["csrf"] = analyze_csrf_risk(
+            results["forms"], results["inputs"], results["cookies"], results["findings"]
+        )
+        publish("CSRF risk analysis complete")
+
+        print("\nChecking for verbose error leakage...")
+        publish("Testing error handling")
+        results["verbose_errors"] = scan_verbose_errors(start_url, results["findings"])
+        publish("Error handling analysis complete")
+
+        print("\nFingerprinting application technology...")
+        publish("Fingerprinting technology")
+        results["technology_fingerprint"] = fingerprint_technology(
+            start_url, initial_html, dict(response.headers), sorted(api_calls)
+        )
+        publish("Technology fingerprinting complete")
+
+        print("\nTesting GraphQL introspection exposure...")
+        publish("Checking GraphQL introspection")
+        results["graphql"] = scan_graphql_introspection(
+            start_url, sorted(api_calls), results["findings"], cfg
+        )
+        publish("GraphQL introspection check complete")
+
         print("\nScanning JavaScript for exposed secrets...")
         publish("Scanning JavaScript for secrets")
         results["javascript_secrets"] = scan_javascript_secrets(
@@ -941,6 +1047,34 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
             "JavaScript secret scan complete",
             javascript_secrets_found=len(results["javascript_secrets"].get("detections", [])),
         )
+
+        print("\nChecking for exposed JavaScript source maps...")
+        publish("Checking source maps")
+        results["source_maps"] = scan_source_maps(
+            start_url, sorted(api_calls), results["findings"]
+        )
+        publish("Source map check complete")
+
+        print("\nChecking for directory listing exposure...")
+        publish("Checking directory listing")
+        results["directory_listing"] = scan_directory_listing(
+            sorted(visited_pages), results["findings"]
+        )
+        publish("Directory listing check complete")
+
+        print("\nChecking for forced browsing hits...")
+        publish("Checking forced browsing")
+        results["forced_browsing"] = scan_forced_browsing(
+            start_url, sorted(visited_pages), results["findings"], cfg
+        )
+        publish("Forced browsing check complete")
+
+        print("\nTesting API rate limiting...")
+        publish("Testing API rate limiting")
+        results["api_rate_limiting"] = scan_api_rate_limits(
+            start_url, sorted(api_calls), results["findings"], cfg
+        )
+        publish("API rate limiting test complete")
 
         await browser.close()
 

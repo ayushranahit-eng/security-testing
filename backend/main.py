@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from models        import ScanRequest
 from config        import DEFAULT_CONFIG
 from core.engine   import run_scan
+from core.pdf_report import build_pdf_filename, render_pdf_report_sync
 from core.reporter import generate_text_report, generate_readable_json
 from scanner.cookies import analyse_cookies
 from scanner.headers import check_headers
@@ -49,6 +50,7 @@ app.add_middleware(
     ],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -256,11 +258,27 @@ def _build_text_report(data: dict) -> tuple[str, bytes]:
     return f"{label}.txt", text_bytes
 
 
+def _build_pdf_report(data: dict) -> tuple[str, bytes]:
+    scan_time = data.get("scan_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    filename = build_pdf_filename(data.get("target", "security-scan"), scan_time)
+    content = render_pdf_report_sync(data, scan_time)
+    return filename, content
+
+
 def _download_text_response(data: dict) -> StreamingResponse:
     filename, content = _build_text_report(data)
     return StreamingResponse(
         io.BytesIO(content),
         media_type="text/plain",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+def _download_pdf_response(data: dict) -> StreamingResponse:
+    filename, content = _build_pdf_report(data)
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
@@ -309,6 +327,10 @@ def scan_status(
         False,
         description="Set true to download the text report after completion. Default false returns readable JSON status.",
     ),
+    pdf: bool = Query(
+        False,
+        description="Set true to download the PDF report after completion.",
+    ),
     readable: bool = Query(
         True,
         description="Return engineer-readable JSON with commentary. Set false for raw JSON data.",
@@ -319,8 +341,18 @@ def scan_status(
     - While running: returns live progress (pages found, API calls, current step, events)
     - When complete (readable=true, default): returns a human-readable JSON report with engineer commentary
     - When complete (download=true): downloads the .txt report file
+    - When complete (pdf=true): downloads the .pdf report file
     - When complete (readable=false): returns raw scan data JSON
     """
+    if pdf:
+        with SCAN_LOCK:
+            job = SCAN_JOBS.get(scan_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="Scan ID not found")
+            if job["status"] == "completed":
+                return _download_pdf_response(job["result"])
+            raise HTTPException(status_code=409, detail="PDF report is not ready yet")
+
     if download:
         with SCAN_LOCK:
             job = SCAN_JOBS.get(scan_id)
@@ -328,6 +360,7 @@ def scan_status(
                 raise HTTPException(status_code=404, detail="Scan ID not found")
             if job["status"] == "completed":
                 return _download_text_response(job["result"])
+            raise HTTPException(status_code=409, detail="Text report is not ready yet")
 
     with SCAN_LOCK:
         job = SCAN_JOBS.get(scan_id)
@@ -497,5 +530,17 @@ async def scan_download_report(req: ScanRequest):
     return StreamingResponse(
         io.BytesIO(content),
         media_type="text/plain",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/scan/report/pdf", include_in_schema=False)
+async def scan_download_pdf(req: ScanRequest):
+    """Run a full scan. Downloads .pdf report."""
+    data = await _run_scan_for_request(req)
+    filename, content = await asyncio.to_thread(_build_pdf_report, data)
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )

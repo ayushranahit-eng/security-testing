@@ -54,6 +54,17 @@ DEFAULT_CONFIG = {
     ],
     "sqli_max_test_parameters": 3,
 
+    # HTTP method and endpoint probing
+    "interesting_http_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"],
+    "forced_browsing_paths": [
+        "/admin", "/admin/", "/dashboard", "/manage", "/internal", "/console",
+        "/staff", "/private", "/dev", "/test", "/debug", "/api/docs",
+        "/docs", "/graphql", "/graphiql", "/swagger", "/actuator",
+    ],
+    "graphql_common_paths": ["/graphql", "/api/graphql", "/query", "/graphiql"],
+    "rate_limit_probe_requests": 6,
+    "rate_limit_probe_delay_ms": 250,
+
     # Security headers to verify
     "required_security_headers": [
         "content-security-policy",
