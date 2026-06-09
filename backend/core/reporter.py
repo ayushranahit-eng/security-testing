@@ -40,6 +40,14 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
     sensitive_analysis = _analyze_sensitive_paths(data.get("sensitive_paths", []))
     cookie_analysis = _analyze_cookies(data.get("cookies", []))
     http_method_analysis = _analyze_http_methods(data.get("http_methods", {}))
+    ct_analysis = _passthrough_scan_result(data.get("certificate_transparency", {}), "Not run")
+    new_subdomain_analysis = _passthrough_scan_result(data.get("new_subdomain_alert", {}), "Not run")
+    subdomain_takeover_analysis = _passthrough_scan_result(data.get("subdomain_takeover", {}), "Not run")
+    ssl_expiry_monitor_analysis = _passthrough_scan_result(data.get("ssl_expiry_monitor", {}), "Not run")
+    header_regression_analysis = _passthrough_scan_result(data.get("header_regression", {}), "Not run")
+    asset_drift_analysis = _passthrough_scan_result(data.get("asset_drift", {}), "Not run")
+    passive_host_analysis = _passthrough_scan_result(data.get("passive_host_intelligence", {}), "Not run")
+    domain_credential_leak_analysis = _passthrough_scan_result(data.get("domain_credential_leaks", {}), "Not run")
     js_secret_analysis = _analyze_javascript_secrets(data.get("javascript_secrets", {}))
     technology_analysis = _analyze_technology(data.get("technology_fingerprint", {}))
     graphql_analysis = _analyze_graphql(data.get("graphql", {}))
@@ -49,6 +57,14 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
     directory_listing_analysis = _analyze_directory_listing(data.get("directory_listing", {}))
     forced_browsing_analysis = _analyze_forced_browsing(data.get("forced_browsing", {}))
     verbose_error_analysis = _analyze_verbose_errors(data.get("verbose_errors", {}))
+    server_header_analysis = _passthrough_scan_result(data.get("server_header_disclosure", {}), "Not run")
+    html_secret_analysis = _passthrough_scan_result(data.get("html_secrets", {}), "Not run")
+    dnssec_analysis = _passthrough_scan_result(data.get("dnssec", {}), "Not run")
+    open_port_analysis = _passthrough_scan_result(data.get("open_ports", {}), "Not run")
+    api_version_analysis = _passthrough_scan_result(data.get("api_versioning", {}), "Not run")
+    domain_posture_analysis = _passthrough_scan_result(data.get("domain_posture", {}), "Not run")
+    path_traversal_analysis = _passthrough_scan_result({"status": "Signals detected" if data.get("path_traversal") else "No traversal signal detected", "issues": data.get("path_traversal", [])}, "Not run")
+    response_splitting_analysis = _passthrough_scan_result({"status": "Signals detected" if data.get("http_response_splitting") else "No response splitting signal detected", "issues": data.get("http_response_splitting", [])}, "Not run")
     dom_xss_analysis = _analyze_dom_xss(data.get("dom_xss", []))
     open_redirect_analysis = _analyze_open_redirect(data.get("open_redirect", []))
     reflected_xss_analysis = _analyze_reflected_xss(data.get("reflected_xss", []))
@@ -117,14 +133,30 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
             "auth_surface": auth_surface_analysis,
             "headers": _analyze_headers(data.get("security_headers", {})),
             "ssl": _analyze_ssl(data.get("ssl", {})),
+            "ssl_expiry_monitor": ssl_expiry_monitor_analysis,
             "cookies": cookie_analysis,
+            "certificate_transparency": ct_analysis,
+            "new_subdomain_alert": new_subdomain_analysis,
+            "subdomain_takeover": subdomain_takeover_analysis,
+            "header_regression": header_regression_analysis,
+            "asset_drift": asset_drift_analysis,
+            "passive_host_intelligence": passive_host_analysis,
+            "domain_credential_leaks": domain_credential_leak_analysis,
+            "server_header_disclosure": server_header_analysis,
             "http_methods": http_method_analysis,
             "javascript_secrets": js_secret_analysis,
+            "html_secrets": html_secret_analysis,
             "technology": technology_analysis,
+            "domain_posture": domain_posture_analysis,
+            "dnssec": dnssec_analysis,
+            "open_ports": open_port_analysis,
             "graphql": graphql_analysis,
+            "api_versioning": api_version_analysis,
             "api_rate_limiting": api_rate_limit_analysis,
             "csrf": csrf_analysis,
             "source_maps": source_map_analysis,
+            "path_traversal": path_traversal_analysis,
+            "http_response_splitting": response_splitting_analysis,
             "directory_listing": directory_listing_analysis,
             "forced_browsing": forced_browsing_analysis,
             "verbose_errors": verbose_error_analysis,
@@ -597,6 +629,12 @@ def _analyze_headers(headers: dict) -> dict:
     }
 
 
+def _passthrough_scan_result(result: dict, default_status: str) -> dict:
+    scan_result = dict(result or {})
+    scan_result.setdefault("status", default_status)
+    return scan_result
+
+
 def _analyze_ssl(ssl_info: dict) -> dict:
     if ssl_info.get("valid"):
         days = ssl_info.get("days_remaining", "?")
@@ -609,11 +647,19 @@ def _analyze_ssl(ssl_info: dict) -> dict:
         else:
             status = "Valid"
             note = f"Certificate is valid with {days} day(s) remaining."
+
+        negotiated_cipher = ssl_info.get("negotiated_cipher") or {}
+        weak_protocols = ssl_info.get("weak_protocols_supported", [])
+        weak_ciphers = ssl_info.get("weak_cipher_suites_accepted", [])
         return {
             "status": status,
             "valid": True,
             "expires_on": ssl_info.get("expires", "Unknown"),
             "days_remaining": days,
+            "negotiated_protocol": ssl_info.get("negotiated_protocol"),
+            "negotiated_cipher": negotiated_cipher,
+            "weak_protocols_supported": weak_protocols,
+            "weak_cipher_suites_accepted": weak_ciphers,
             "note": note,
         }
 
@@ -1107,6 +1153,236 @@ def _enrich_finding(finding: dict) -> dict:
             "raw": finding,
         }
 
+    if vuln == "Server Header Disclosure":
+        return {
+            "title": "Server version disclosure observed",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "High",
+            "impact": "Version banners and framework headers help attackers fingerprint the stack faster and focus exploit research on specific components.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Remove or generalize unnecessary server-identifying headers at the origin, reverse proxy, CDN, or application framework layer.",
+            "raw": finding,
+        }
+
+    if vuln == "Security Header Regression Alert":
+        return {
+            "title": "Security headers regressed since the last baseline",
+            "severity": severity,
+            "priority": "P2",
+            "confidence": "High",
+            "impact": "A previously present browser-security header disappearing can silently reopen exposure to clickjacking, downgrade, referrer leakage, or client-side injection impact.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Compare current server, CDN, and application header configuration against the last known-good baseline and restore any unintentionally removed headers.",
+            "raw": finding,
+        }
+
+    if vuln == "Weak TLS Protocol Supported":
+        protocols = finding.get("protocols", [])
+        return {
+            "title": "Legacy TLS protocol support detected",
+            "severity": severity,
+            "priority": "P2",
+            "confidence": "High",
+            "impact": "Support for TLS 1.0 or TLS 1.1 weakens transport security and can keep older downgrade-prone clients in circulation longer than intended.",
+            "evidence_summary": ", ".join(protocols) if protocols else "; ".join(details),
+            "remediation": "Disable TLS 1.0 and TLS 1.1 at the CDN, load balancer, reverse proxy, or origin so only modern TLS versions remain available.",
+            "raw": finding,
+        }
+
+    if vuln == "Weak Cipher Suites Accepted":
+        cipher_suites = finding.get("cipher_suites", [])
+        return {
+            "title": "Weak TLS cipher suites accepted",
+            "severity": severity,
+            "priority": "P2",
+            "confidence": "High",
+            "impact": "Accepting outdated or weaker cipher suites can reduce transport confidentiality and extend support for clients that should already be retired.",
+            "evidence_summary": ", ".join(cipher_suites) if cipher_suites else "; ".join(details),
+            "remediation": "Tighten the TLS cipher policy to prefer modern AEAD suites and remove older compatibility ciphers from the server or CDN configuration.",
+            "raw": finding,
+        }
+
+    if vuln == "SSL Certificate Expiry Monitor":
+        return {
+            "title": "Certificate renewal window reached",
+            "severity": severity,
+            "priority": "P3",
+            "confidence": "High",
+            "impact": "Certificates approaching expiry increase the risk of service interruption, browser warnings, and emergency renewals under time pressure.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Renew the certificate before expiry and confirm the full HTTPS termination chain is updated across CDN, load balancer, and origin layers.",
+            "raw": finding,
+        }
+
+    if vuln == "Subdomain Takeover":
+        return {
+            "title": "Potential subdomain takeover fingerprint detected",
+            "severity": severity,
+            "priority": "P1",
+            "confidence": "Medium",
+            "impact": "Takeover-prone subdomains can let attackers host content on a trusted domain, support phishing, capture cookies for loose scopes, or impersonate internal services.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Remove unused DNS records, reclaim the third-party service binding, and verify dangling CNAMEs are not left pointing at unclaimed resources.",
+            "raw": finding,
+        }
+
+    if vuln == "New Subdomain Alert":
+        return {
+            "title": "New public subdomains observed",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "High",
+            "impact": "Newly observed subdomains expand public attack surface and may represent shadow infrastructure, staging systems, or services launched outside normal review.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Review the newly observed subdomains, confirm ownership and purpose, and ensure each one meets the same security baseline as the main site.",
+            "raw": finding,
+        }
+
+    if vuln == "Hardcoded Secrets in HTML":
+        return {
+            "title": "Hardcoded secret material exposed in HTML",
+            "severity": severity,
+            "priority": "P1" if severity in ("Critical", "High") else "P2",
+            "confidence": "Medium",
+            "impact": "Secrets rendered into page HTML can be harvested directly by any visitor and may allow API abuse, impersonation, or downstream compromise.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Remove secrets from rendered HTML, move privileged tokens server-side, and rotate any exposed live credentials immediately.",
+            "raw": finding,
+        }
+
+    if vuln == "Path Traversal":
+        return {
+            "title": "Path traversal file-read signal detected",
+            "severity": severity,
+            "priority": "P1",
+            "confidence": "High",
+            "impact": "Path traversal can expose local files such as system configuration, credentials, source code, or application secrets from the server filesystem.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Never use raw user input in filesystem paths, apply strict allowlists, normalize paths safely, and enforce a fixed document root or storage boundary.",
+            "raw": finding,
+        }
+
+    if vuln == "Exposed Asset Drift Detection":
+        return {
+            "title": "Public attack-surface drift detected",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "High",
+            "impact": "Unexpected new pages or API calls can signal feature rollout, shadow endpoints, or accidental exposure that has not yet been security reviewed.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Review recently added or removed public routes and API calls, confirm they were intentional, and re-apply the security baseline to new assets.",
+            "raw": finding,
+        }
+
+    if vuln == "Open Port Scanning":
+        return {
+            "title": "Additional public TCP ports detected",
+            "severity": severity,
+            "priority": "P3",
+            "confidence": "High",
+            "impact": "Unnecessary exposed ports increase attack surface and may reveal administrative, development, or datastore services to the internet.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Close unused ports at the firewall, load balancer, security group, or host and restrict administrative services to trusted networks only.",
+            "raw": finding,
+        }
+
+    if vuln == "Missing DNSSEC":
+        return {
+            "title": "DNSSEC not detected",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "Medium",
+            "impact": "Without DNSSEC, resolvers have fewer authenticity guarantees for DNS answers, which weakens defense against certain DNS tampering scenarios.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Enable DNSSEC signing for the public zone and verify DS and DNSKEY records are published correctly with the registrar and authoritative DNS provider.",
+            "raw": finding,
+        }
+
+    if vuln == "Shodan / Censys Passive Recon":
+        return {
+            "title": "Passive host intelligence found public exposure data",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "Medium",
+            "impact": "Public internet intelligence can reveal externally observed ports, tags, or vulnerabilities that expand the recon available to attackers.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Review the passive host data against the intended public footprint and close or harden any services that should not be externally discoverable.",
+            "raw": finding,
+        }
+
+    if vuln == "IP Reputation Check":
+        return {
+            "title": "Passive IP risk signals detected",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "Low",
+            "impact": "Passive risk signals such as exposed risky ports, public tags, or listed vulnerabilities can indicate an internet-facing host deserves closer triage.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Review the host's public exposure, verify whether the listed services are intended, and investigate any passively observed vulnerability signals.",
+            "raw": finding,
+        }
+
+    if vuln == "API Version Abuse":
+        return {
+            "title": "Multiple public API versions reachable",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "Medium",
+            "impact": "Reachable parallel or legacy API versions can drift from newer authorization, validation, and rate-limit controls over time.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Inventory public API versions, retire obsolete versions, and confirm security controls are consistent across every reachable version.",
+            "raw": finding,
+        }
+
+    if vuln == "Domain Credential Leak Check":
+        return {
+            "title": "Public breach records matched the domain",
+            "severity": severity,
+            "priority": "P2",
+            "confidence": "Medium",
+            "impact": "Public breach history associated with the domain can increase credential reuse risk, phishing exposure, and account takeover pressure against related users.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Review the matched breach history, enforce password rotation and MFA where possible, and increase credential-stuffing defenses for accounts tied to the domain.",
+            "raw": finding,
+        }
+
+    if vuln == "HTTP Response Splitting":
+        return {
+            "title": "HTTP response splitting behavior detected",
+            "severity": severity,
+            "priority": "P1",
+            "confidence": "High",
+            "impact": "CRLF header injection can enable cache poisoning, header manipulation, redirect abuse, or downstream response confusion in browsers and intermediaries.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Reject CRLF characters in header-influencing input, normalize user-controlled values safely, and avoid copying raw input into response headers.",
+            "raw": finding,
+        }
+
+    if vuln == "Shodan Exposure Score":
+        return {
+            "title": "Elevated passive exposure score observed",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "Medium",
+            "impact": "A higher exposure score suggests the host presents a broader or noisier public footprint than a minimal web-only deployment.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Reduce unnecessary public services, review passively observed ports and vulnerabilities, and aim for a smaller externally visible footprint.",
+            "raw": finding,
+        }
+
+    if vuln == "Domain Age & Parking Detection":
+        return {
+            "title": "Domain posture signal detected",
+            "severity": severity,
+            "priority": "P4",
+            "confidence": "Low",
+            "impact": "Very new or parked domains can increase fraud, supply-chain, or trust-review risk and may deserve extra validation before operational use.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Validate ownership, registrar setup, and operational intent for newly registered or parked domains before treating them as stable production assets.",
+            "raw": finding,
+        }
+
     if vuln == "SQL Injection":
         vectors = finding.get("sqli_vectors", [])
         return {
@@ -1260,6 +1536,44 @@ def _generate_next_steps(findings: list, data: dict, api_analysis: dict, sensiti
         steps.append("Separate third-party cookies from real auth/session cookies, then harden session cookies with Secure, HttpOnly, and SameSite.")
     if any(f.get("vulnerability") == "HTTP TRACE Enabled" for f in findings):
         steps.append("Disable HTTP TRACE and review unnecessary advertised methods on the public origin.")
+    if any(f.get("vulnerability") == "Server Header Disclosure" for f in findings):
+        steps.append("Remove server-identifying response headers that are not operationally necessary in public traffic.")
+    if any(f.get("vulnerability") == "Security Header Regression Alert" for f in findings):
+        steps.append("Compare the current header set against the last baseline and restore any security headers that disappeared unintentionally.")
+    if any(f.get("vulnerability") == "Weak TLS Protocol Supported" for f in findings):
+        steps.append("Disable TLS 1.0 and TLS 1.1 anywhere the site terminates HTTPS so only modern protocol versions remain enabled.")
+    if any(f.get("vulnerability") == "Weak Cipher Suites Accepted" for f in findings):
+        steps.append("Review the HTTPS cipher policy and remove older compatibility suites in favor of modern AEAD-based cipher suites.")
+    if any(f.get("vulnerability") == "SSL Certificate Expiry Monitor" for f in findings):
+        steps.append("Renew the public TLS certificate before the monitored expiry threshold is reached and verify the renewed certificate is deployed everywhere HTTPS terminates.")
+    if any(f.get("vulnerability") == "Subdomain Takeover" for f in findings):
+        steps.append("Investigate any takeover-prone subdomains first, remove dangling DNS records, and reclaim unused third-party service bindings.")
+    if any(f.get("vulnerability") == "New Subdomain Alert" for f in findings):
+        steps.append("Review newly observed subdomains and confirm each one is intentional, owned, and covered by the same security baseline as the main property.")
+    if any(f.get("vulnerability") == "Hardcoded Secrets in HTML" for f in findings):
+        steps.append("Remove secrets from rendered HTML immediately and rotate any exposed live credentials or tokens.")
+    if any(f.get("vulnerability") == "Path Traversal" for f in findings):
+        steps.append("Review any file, template, or download parameters for path normalization flaws and lock them to allowlisted server-side resources.")
+    if any(f.get("vulnerability") == "Exposed Asset Drift Detection" for f in findings):
+        steps.append("Review new and removed public pages or API routes since the last baseline so unexpected surface changes do not slip through unnoticed.")
+    if any(f.get("vulnerability") == "Open Port Scanning" for f in findings):
+        steps.append("Review public port exposure and close any administrative, datastore, or development services that do not need internet reachability.")
+    if any(f.get("vulnerability") == "Missing DNSSEC" for f in findings):
+        steps.append("Coordinate with the DNS provider and registrar to enable DNSSEC if the domain is meant to be production-facing.")
+    if any(f.get("vulnerability") == "Shodan / Censys Passive Recon" for f in findings):
+        steps.append("Compare passive host-intelligence data against the intended public footprint and investigate any externally observed ports, tags, or vulnerability hints.")
+    if any(f.get("vulnerability") == "IP Reputation Check" for f in findings):
+        steps.append("Review passive IP risk signals and confirm the host is not exposing unnecessary services or vulnerable software to the internet.")
+    if any(f.get("vulnerability") == "API Version Abuse" for f in findings):
+        steps.append("Inventory every reachable API version and confirm old and new versions enforce the same authentication, validation, and abuse protections.")
+    if any(f.get("vulnerability") == "Domain Credential Leak Check" for f in findings):
+        steps.append("Review the domain's public breach history and raise credential hygiene controls such as password resets, MFA, and credential-stuffing protection where applicable.")
+    if any(f.get("vulnerability") == "HTTP Response Splitting" for f in findings):
+        steps.append("Patch CRLF injection anywhere user-controlled input can influence headers, redirects, or proxy-facing response metadata.")
+    if any(f.get("vulnerability") == "Shodan Exposure Score" for f in findings):
+        steps.append("Reduce the externally visible footprint of the host by closing unnecessary ports and addressing passively observed exposure signals.")
+    if any(f.get("vulnerability") == "Domain Age & Parking Detection" for f in findings):
+        steps.append("Review whether the scanned domain is intentionally live, newly registered, or parked before trusting it as a stable production property.")
     if any(f.get("vulnerability") == "JavaScript Secrets Exposed" for f in findings):
         steps.append("Rotate any exposed API keys or tokens immediately and move privileged secrets out of frontend JavaScript.")
     if any(f.get("vulnerability") == "GraphQL Introspection" for f in findings):

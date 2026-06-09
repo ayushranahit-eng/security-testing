@@ -65,6 +65,27 @@ DEFAULT_CONFIG = {
     "graphql_common_paths": ["/graphql", "/api/graphql", "/query", "/graphiql"],
     "rate_limit_probe_requests": 4,
     "rate_limit_probe_delay_ms": 150,
+    "path_traversal_parameter_names": [
+        "file", "path", "page", "dir", "directory", "folder",
+        "template", "document", "doc", "download", "image",
+    ],
+    "path_traversal_payloads": [
+        "../../../../etc/passwd",
+        "..%2f..%2f..%2f..%2fetc/passwd",
+        "..\\..\\..\\..\\windows\\win.ini",
+        "..%5c..%5c..%5c..%5cwindows\\win.ini",
+    ],
+    "path_traversal_max_urls": 8,
+    "max_html_secret_pages": 10,
+    "open_port_scan_ports": [21, 22, 80, 443, 3000, 3306, 5000, 5432, 6379, 8000, 8080, 8443, 9200, 27017],
+    "open_port_scan_timeout_seconds": 0.75,
+    "api_version_probe_candidates": ["v1", "v2", "v3", "beta"],
+    "api_version_max_endpoints": 6,
+    "http_response_splitting_parameter_names": [
+        "redirect", "next", "return", "returnurl", "url", "file", "download",
+    ],
+    "http_response_splitting_max_urls": 6,
+    "new_domain_age_threshold_days": 30,
 
     # Security headers to verify
     "required_security_headers": [

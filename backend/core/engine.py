@@ -22,25 +22,46 @@ from datetime import datetime
 from urllib.parse import parse_qsl, urlparse
 from playwright.async_api import async_playwright
 
+from core.baseline_store           import load_baseline, save_baseline
 from scanner.crawler                import normalise_url, is_internal
 from scanner.headers                import check_headers
 from scanner.auth_surface_detector  import detect_auth_surface
 from scanner.cookies                import analyse_cookies
+from scanner.certificate_transparency_scanner import (
+    scan_certificate_transparency,
+    scan_new_subdomain_alert,
+    scan_subdomain_takeover,
+)
+from scanner.domain_credential_leak_scanner import scan_domain_credential_leaks
+from scanner.monitoring_scanner    import (
+    scan_exposed_asset_drift,
+    scan_security_header_regression,
+    scan_ssl_expiry_monitor,
+)
+from scanner.passive_exposure_scanner import scan_passive_host_intelligence
 from scanner.ssl_check              import check_ssl, evaluate_ssl
 from scanner.http_method_analyzer   import analyze_http_methods
 from scanner.javascript_secret_scanner import scan_javascript_secrets
+from scanner.html_secret_scanner    import scan_html_secrets
 from scanner.dom_xss_scanner         import scan_dom_xss
 from scanner.directory_listing_scanner import scan_directory_listing
 from scanner.forced_browsing_scanner import scan_forced_browsing
 from scanner.graphql_introspection_scanner import scan_graphql_introspection
+from scanner.http_response_splitting_scanner import scan_http_response_splitting
 from scanner.open_redirect_scanner  import scan_open_redirect
+from scanner.open_port_scanner      import scan_open_ports
+from scanner.path_traversal_scanner import scan_path_traversal
 from scanner.reflected_xss_scanner  import scan_reflected_xss
 from scanner.source_map_scanner     import scan_source_maps
 from scanner.stored_xss_scanner     import scan_stored_xss
 from scanner.sql_injection_scanner  import scan_sql_injection
 from scanner.technology_fingerprinter import fingerprint_technology
 from scanner.api_rate_limit_scanner import scan_api_rate_limits
+from scanner.api_version_scanner    import scan_api_versions
 from scanner.csrf_scanner           import analyze_csrf_risk
+from scanner.dnssec_scanner         import scan_dnssec
+from scanner.domain_posture_scanner import scan_domain_posture
+from scanner.server_header_scanner  import scan_server_header_disclosure
 from scanner.sensitive_path_prober  import probe_sensitive_paths
 from scanner.cors_security_analyzer import analyze_cors_security
 from scanner.verbose_error_scanner  import scan_verbose_errors
@@ -643,6 +664,7 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
     started_at = datetime.now()
     scan_time  = started_at.strftime("%Y-%m-%d %H:%M:%S")
     probe_timeout = int(cfg.get("network_probe_timeout_seconds", 4))
+    previous_baseline = load_baseline(start_url)
 
     api_calls      = set()
     visited_pages  = set()
@@ -663,13 +685,29 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         "security_headers":          {},
         "cookies":                   [],
         "auth_surface":              {},
+        "certificate_transparency":  {},
+        "new_subdomain_alert":       {},
+        "subdomain_takeover":        {},
+        "ssl_expiry_monitor":        {},
+        "header_regression":         {},
+        "asset_drift":               {},
+        "passive_host_intelligence": {},
+        "domain_credential_leaks":   {},
+        "server_header_disclosure":  {},
         "ssl":                       {},
+        "domain_posture":            {},
+        "dnssec":                    {},
+        "open_ports":                {},
         "http_methods":              {},
+        "api_versioning":            {},
+        "html_secrets":              {},
         "javascript_secrets":        {},
         "technology_fingerprint":    {},
         "graphql":                   {},
         "api_rate_limiting":         {},
         "csrf":                      {},
+        "http_response_splitting":   [],
+        "path_traversal":            [],
         "source_maps":               {},
         "directory_listing":         {},
         "forced_browsing":           {},
@@ -682,6 +720,10 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         "sensitive_paths":           [],
         "cors_analysis":             {},
         "findings":                  [],
+        "baseline_reference":        {
+            "available": bool(previous_baseline),
+            "captured_at": previous_baseline.get("saved_at"),
+        },
     }
 
     def publish(current_step: str, **extra) -> None:
@@ -1094,6 +1136,44 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
             estimated_total_seconds=estimated_total_seconds,
         )
 
+        print("\nReviewing server disclosure headers...")
+        publish(
+            "Checking server headers",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["server_header_disclosure"] = scan_server_header_disclosure(
+            dict(response.headers), results["findings"]
+        )
+        publish(
+            "Server header check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nChecking security header regression...")
+        publish(
+            "Checking header regression",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["header_regression"] = scan_security_header_regression(
+            results["security_headers"], previous_baseline, results["findings"]
+        )
+        publish(
+            "Header regression check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
         publish(
             "Validating SSL certificate",
             scan_phase="post_scan",
@@ -1105,6 +1185,173 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         evaluate_ssl(results["ssl"], results["findings"])
         publish(
             "SSL validation complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nChecking SSL expiry monitor...")
+        publish(
+            "Checking SSL expiry monitor",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["ssl_expiry_monitor"] = scan_ssl_expiry_monitor(
+            results["ssl"], previous_baseline, results["findings"], cfg
+        )
+        publish(
+            "SSL expiry monitor complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nChecking domain posture...")
+        publish(
+            "Checking domain posture",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["domain_posture"] = scan_domain_posture(
+            start_url, initial_html, results["findings"], cfg
+        )
+        publish(
+            "Domain posture check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nPulling certificate transparency records...")
+        publish(
+            "Checking certificate transparency",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["certificate_transparency"] = scan_certificate_transparency(
+            start_url, results["findings"], cfg
+        )
+        publish(
+            "Certificate transparency check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nChecking for newly observed subdomains...")
+        publish(
+            "Checking new subdomains",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["new_subdomain_alert"] = scan_new_subdomain_alert(
+            results["certificate_transparency"], previous_baseline, results["findings"], cfg
+        )
+        publish(
+            "New subdomain check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nChecking subdomain takeover fingerprints...")
+        publish(
+            "Checking subdomain takeover",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["subdomain_takeover"] = scan_subdomain_takeover(
+            results["certificate_transparency"], results["findings"], cfg
+        )
+        publish(
+            "Subdomain takeover check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nChecking DNSSEC...")
+        publish(
+            "Checking DNSSEC",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["dnssec"] = scan_dnssec(start_url, results["findings"])
+        publish(
+            "DNSSEC check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nChecking common open ports...")
+        publish(
+            "Checking open ports",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["open_ports"] = scan_open_ports(start_url, results["findings"], cfg)
+        publish(
+            "Open port check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nPulling passive host intelligence...")
+        publish(
+            "Checking passive host intelligence",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["passive_host_intelligence"] = scan_passive_host_intelligence(
+            start_url, results["findings"]
+        )
+        publish(
+            "Passive host intelligence complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nChecking public breach catalog matches...")
+        publish(
+            "Checking domain credential leaks",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["domain_credential_leaks"] = scan_domain_credential_leaks(
+            start_url, results["findings"]
+        )
+        publish(
+            "Domain credential leak check complete",
             scan_phase="post_scan",
             pages_total=len(discovered_pages),
             pages_scanned=len(discovered_pages),
@@ -1211,6 +1458,29 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
             estimated_total_seconds=estimated_total_seconds,
         )
 
+        print("\nChecking HTML for exposed secrets...")
+        publish(
+            "Scanning HTML for secrets",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["html_secrets"] = scan_html_secrets(
+            start_url,
+            sorted(visited_pages),
+            initial_html,
+            results["findings"],
+            cfg,
+        )
+        publish(
+            "HTML secret scan complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
         print("\nTesting GraphQL introspection exposure...")
         publish(
             "Checking GraphQL introspection",
@@ -1273,6 +1543,65 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
             estimated_total_seconds=estimated_total_seconds,
         )
 
+        print("\nChecking versioned API exposure...")
+        publish(
+            "Checking API versions",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["api_versioning"] = scan_api_versions(
+            start_url, sorted(api_calls), results["findings"], cfg
+        )
+        publish(
+            "API version check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        print("\nTesting path traversal...")
+        publish(
+            "Testing path traversal",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["path_traversal"] = scan_path_traversal(
+            start_url, sorted(visited_pages), results["findings"], cfg
+        )
+        publish(
+            "Path traversal test complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+            path_traversal_findings=len(results["path_traversal"]),
+        )
+
+        print("\nTesting HTTP response splitting...")
+        publish(
+            "Testing HTTP response splitting",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["http_response_splitting"] = scan_http_response_splitting(
+            start_url, sorted(visited_pages), results["findings"], cfg
+        )
+        publish(
+            "HTTP response splitting test complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+            response_splitting_findings=len(results["http_response_splitting"]),
+        )
+
         print("\nChecking for directory listing exposure...")
         publish(
             "Checking directory listing",
@@ -1330,6 +1659,28 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
             estimated_total_seconds=estimated_total_seconds,
         )
 
+        print("\nChecking exposed asset drift...")
+        publish(
+            "Checking exposed asset drift",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["asset_drift"] = scan_exposed_asset_drift(
+            sorted(visited_pages),
+            sorted(api_calls),
+            previous_baseline,
+            results["findings"],
+        )
+        publish(
+            "Exposed asset drift check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
         await browser.close()
 
     finished_at = datetime.now()
@@ -1340,6 +1691,17 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         0,
         int((finished_at - started_at).total_seconds()),
     )
+    baseline_path = save_baseline(start_url, {
+        "saved_at": results["scan_completed_at"],
+        "scan_completed_at": results["scan_completed_at"],
+        "present_headers": results["security_headers"].get("present", []),
+        "pages": results["pages"],
+        "api_calls": results["api_calls"],
+        "ct_subdomains": results["certificate_transparency"].get("subdomains", []),
+        "ssl_expires": results["ssl"].get("expires"),
+    })
+    results["baseline_reference"]["saved_at"] = results["scan_completed_at"]
+    results["baseline_reference"]["path"] = baseline_path
     publish(
         "Scan complete",
         scan_phase="completed",
