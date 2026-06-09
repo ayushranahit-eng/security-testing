@@ -24,6 +24,7 @@ DEFAULT_CONFIG = {
     "max_javascript_files": 25,
     "max_inline_script_pages": 10,
     "max_download_bytes_per_file": 500_000,
+    "network_probe_timeout_seconds": 4,
 
     # Reflected XSS validation
     "xss_marker_prefix": "hitxss",
@@ -62,8 +63,8 @@ DEFAULT_CONFIG = {
         "/docs", "/graphql", "/graphiql", "/swagger", "/actuator",
     ],
     "graphql_common_paths": ["/graphql", "/api/graphql", "/query", "/graphiql"],
-    "rate_limit_probe_requests": 6,
-    "rate_limit_probe_delay_ms": 250,
+    "rate_limit_probe_requests": 4,
+    "rate_limit_probe_delay_ms": 150,
 
     # Security headers to verify
     "required_security_headers": [

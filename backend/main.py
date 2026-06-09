@@ -10,6 +10,7 @@ import io
 import asyncio
 import sys
 import threading
+import traceback
 import uuid
 from datetime import datetime
 from urllib.parse import urlparse
@@ -147,6 +148,7 @@ async def _run_background_scan(scan_id: str, req: ScanRequest) -> None:
                 })
                 job["event_count"] = len(events)
     except Exception as exc:
+        traceback.print_exc()
         with SCAN_LOCK:
             job = SCAN_JOBS.get(scan_id)
             if job is not None:
@@ -174,10 +176,128 @@ def _scan_label(url: str) -> str:
     return f"{domain}_{timestamp}"
 
 
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+def _estimate_scan_progress(job: dict) -> dict:
+    current_step = str(job.get("current_step") or "")
+    scan_phase = str(job.get("scan_phase") or "discovery")
+    pages_crawled = max(0, int(job.get("pages_found", 0)))
+    pages_pending = max(0, int(job.get("pending_pages", 0)))
+    pages_scanned = max(0, int(job.get("pages_scanned", 0)))
+    pages_known = max(
+        pages_crawled,
+        int(job.get("pages_known", 0) or 0),
+        pages_crawled + pages_pending,
+    )
+    page_limit = max(1, int(job.get("max_pages", 20) or 20))
+    pages_total = max(0, int(job.get("pages_total", 0) or 0))
+    estimated_total_seconds = job.get("estimated_total_seconds")
+    if estimated_total_seconds is not None:
+        try:
+            estimated_total_seconds = max(1, int(estimated_total_seconds))
+        except Exception:
+            estimated_total_seconds = None
+    discovered_total = min(page_limit, max(pages_known, 1))
+    crawl_complete = scan_phase in {"active_scan", "post_scan", "completed"} or current_step == "Page crawl limit reached"
+
+    started_at = _parse_iso_timestamp(job.get("created_at"))
+    finished_at = _parse_iso_timestamp(job.get("finished_at"))
+    reference_time = finished_at or datetime.now()
+    elapsed_seconds = 0
+    if started_at is not None:
+        elapsed_seconds = max(0, int((reference_time - started_at).total_seconds()))
+
+    if job.get("status") == "failed":
+        return {
+            "elapsed_seconds": elapsed_seconds,
+            "remaining_seconds": None,
+            "progress_percent": min(95, max(5, int(job.get("progress_percent", 0) or 12))),
+            "pages_known": max(pages_crawled, pages_known, pages_total),
+            "page_limit": page_limit,
+            "crawl_complete": False,
+            "eta_finalized": False,
+            "note": "Scan failed before the ETA could finish.",
+        }
+
+    if job.get("status") == "completed":
+        return {
+            "elapsed_seconds": elapsed_seconds,
+            "remaining_seconds": 0,
+            "progress_percent": 100,
+            "pages_known": max(pages_crawled, pages_known, pages_total),
+            "page_limit": page_limit,
+            "crawl_complete": True,
+            "eta_finalized": True,
+            "note": "Scan complete.",
+        }
+
+    if elapsed_seconds <= 0:
+        return {
+            "elapsed_seconds": 0,
+            "remaining_seconds": None,
+            "progress_percent": 3,
+            "pages_known": max(pages_known, pages_total),
+            "page_limit": page_limit,
+            "crawl_complete": crawl_complete,
+            "eta_finalized": False,
+            "note": "Building the first timing estimate.",
+        }
+
+    if estimated_total_seconds is None or scan_phase == "discovery":
+        crawl_progress = pages_crawled / max(1, discovered_total)
+        progress_percent = min(30, max(6, int(crawl_progress * 30)))
+        return {
+            "elapsed_seconds": elapsed_seconds,
+            "remaining_seconds": None,
+            "progress_percent": progress_percent,
+            "pages_known": max(pages_known, pages_total),
+            "page_limit": page_limit,
+            "crawl_complete": False,
+            "eta_finalized": False,
+            "note": "Counting pages and scan tasks before locking the ETA.",
+        }
+
+    remaining_seconds = max(0, estimated_total_seconds - elapsed_seconds)
+    pages_total = max(1, pages_total or pages_known)
+
+    if scan_phase == "active_scan":
+        page_fraction = pages_scanned / max(1, pages_total)
+        elapsed_fraction = min(1.0, elapsed_seconds / max(1, estimated_total_seconds))
+        progress_percent = min(90, max(32, int(max(page_fraction, elapsed_fraction) * 85)))
+        note = "ETA is locked from the counted pages and discovered scan workload."
+    elif scan_phase == "post_scan":
+        elapsed_fraction = min(1.0, elapsed_seconds / max(1, estimated_total_seconds))
+        progress_percent = min(99, max(88, int(elapsed_fraction * 100)))
+        note = "All pages were counted first. The scanner is finishing the remaining checks."
+    else:
+        elapsed_fraction = min(1.0, elapsed_seconds / max(1, estimated_total_seconds))
+        progress_percent = min(99, max(32, int(elapsed_fraction * 100)))
+        note = "ETA is based on the counted pages and discovered workload."
+
+    return {
+        "elapsed_seconds": elapsed_seconds,
+        "remaining_seconds": remaining_seconds,
+        "progress_percent": progress_percent,
+        "pages_known": max(pages_crawled, pages_known, pages_total),
+        "page_limit": page_limit,
+        "crawl_complete": True,
+        "eta_finalized": True,
+        "note": note,
+    }
+
+
 def _build_live_status(job: dict) -> dict:
     """Build a human-readable live status response for in-progress scans."""
     status = job.get("status", "unknown")
     current_step = job.get("current_step", "—")
+    timing_estimate = _estimate_scan_progress(job)
     
     status_emoji = {
         "queued":  "⏳",
@@ -208,6 +328,9 @@ def _build_live_status(job: dict) -> dict:
         "target": job.get("target"),
         "live_metrics": {
             "pages_crawled": job.get("pages_found", 0),
+            "pages_known": timing_estimate["pages_known"],
+            "pages_scanned": job.get("pages_scanned", 0),
+            "pages_total": job.get("pages_total", 0),
             "forms_found": job.get("forms_found", 0),
             "inputs_discovered": job.get("inputs_found", 0),
             "buttons_tested": job.get("buttons_found", 0),
@@ -223,6 +346,17 @@ def _build_live_status(job: dict) -> dict:
         "timing": {
             "started_at": job.get("created_at"),
             "last_updated": job.get("updated_at"),
+            "elapsed_seconds": timing_estimate["elapsed_seconds"],
+            "estimated_remaining_seconds": timing_estimate["remaining_seconds"],
+            "eta_finalized": timing_estimate["eta_finalized"],
+            "eta_note": timing_estimate["note"],
+        },
+        "error": job.get("error"),
+        "progress": {
+            "percent": timing_estimate["progress_percent"],
+            "crawl_complete": timing_estimate["crawl_complete"],
+            "page_limit": timing_estimate["page_limit"],
+            "phase": job.get("scan_phase", "discovery"),
         },
     }
 
@@ -241,10 +375,42 @@ def _get_step_note(step: str) -> str:
         "Cookies analyzed":               "✅ Cookie analysis complete",
         "Discovering page elements":      "🔎 Discovering forms, inputs, and buttons",
         "Initial elements discovered":    "✅ Page elements cataloged",
+        "Detecting authentication surface":"🔐 Checking whether login or signup functionality exists",
+        "Authentication surface detection complete":"✅ Initial auth-surface classification complete",
+        "Scan workload estimated":        "📋 Page discovery is complete and the scan has locked an ETA from the counted workload",
+        "Scanning discovered page":       "🧪 Running active validation against the counted pages",
         "Interacting with target page":   "🤖 Filling forms and clicking buttons to trigger API calls",
         "Target page interaction complete":"✅ Main page interaction done",
+        "Page crawl limit reached":       "📏 Page cap reached — crawl stopped and final checks are continuing",
+        "Refreshing authentication surface classification":"🔄 Refreshing auth coverage using all discovered evidence",
+        "Authentication coverage classification complete":"✅ Public vs auth-boundary coverage classification complete",
+        "Finalizing post-crawl checks":   "🧾 Crawl is complete — finishing validation checks and preparing the final report",
+        "Checking HTTP methods":          "🧪 Reviewing allowed HTTP methods and risky verbs like TRACE",
+        "HTTP methods checked":           "✅ HTTP method review complete",
         "Validating SSL certificate":     "🔒 Verifying SSL/TLS certificate validity",
         "SSL validation complete":        "✅ SSL certificate checked",
+        "Probing sensitive paths":        "🗂️ Testing common sensitive files and endpoints for exposure",
+        "Sensitive path probing complete":"✅ Sensitive path review complete",
+        "Analyzing CORS security":        "🌐 Checking cross-origin trust behavior",
+        "CORS analysis complete":         "✅ CORS review complete",
+        "Analyzing CSRF risk":            "🛡️ Reviewing forms for likely anti-CSRF protections",
+        "CSRF risk analysis complete":    "✅ CSRF risk review complete",
+        "Testing error handling":         "🧯 Checking whether error responses leak technical detail",
+        "Error handling analysis complete":"✅ Error handling review complete",
+        "Fingerprinting technology":      "🧠 Identifying likely frameworks and server-side technology markers",
+        "Technology fingerprinting complete":"✅ Technology fingerprinting complete",
+        "Checking GraphQL introspection": "🔎 Testing whether GraphQL schema metadata is publicly exposed",
+        "GraphQL introspection check complete":"✅ GraphQL review complete",
+        "Scanning JavaScript for secrets":"🔑 Checking first-party JavaScript and inline scripts for exposed keys or tokens",
+        "JavaScript secret scan complete":"✅ JavaScript secret scan complete",
+        "Checking source maps":          "🧩 Checking whether JavaScript source maps are publicly accessible",
+        "Source map check complete":     "✅ Source map review complete",
+        "Checking directory listing":    "📂 Checking whether the server exposes browsable directory indexes",
+        "Directory listing check complete":"✅ Directory listing review complete",
+        "Checking forced browsing":      "🚪 Testing common unlinked routes for direct access",
+        "Forced browsing check complete":"✅ Forced browsing review complete",
+        "Testing API rate limiting":     "⏱️ Sending a few quick API requests to look for throttling signals",
+        "API rate limiting test complete":"✅ API throttling review complete",
         "Scan complete":                  "🎉 Scan finished — results ready",
     }
     return notes.get(step, f"🔄 {step}")
@@ -309,6 +475,12 @@ async def scan_start(req: ScanRequest):
             "api_calls_found": 0,
             "findings_found": 0,
             "pending_pages": 0,
+            "pages_known": 0,
+            "pages_scanned": 0,
+            "pages_total": 0,
+            "scan_phase": "discovery",
+            "max_pages": req.max_pages,
+            "max_depth": req.max_depth,
             "events": [],
             "event_count": 0,
             "created_at": now,

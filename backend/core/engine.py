@@ -17,7 +17,9 @@ accept both awaitable and direct calls; we await only what is necessary.
 """
 
 import hashlib
+import sys
 from datetime import datetime
+from urllib.parse import parse_qsl, urlparse
 from playwright.async_api import async_playwright
 
 from scanner.crawler                import normalise_url, is_internal
@@ -42,6 +44,18 @@ from scanner.csrf_scanner           import analyze_csrf_risk
 from scanner.sensitive_path_prober  import probe_sensitive_paths
 from scanner.cors_security_analyzer import analyze_cors_security
 from scanner.verbose_error_scanner  import scan_verbose_errors
+
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 
 def _emit_progress(progress, current_step: str, **metrics) -> None:
@@ -69,6 +83,27 @@ def _emit_event(progress, level: str, phase: str, message: str, **data) -> None:
         })
     except Exception:
         pass
+
+
+def _estimate_total_scan_seconds(discovered_pages: list, results: dict, discovery_elapsed_seconds: int) -> int:
+    total_pages = len(discovered_pages)
+    total_forms = len(results.get("forms", []))
+    total_inputs = len(results.get("inputs", []))
+    total_api_calls = len(results.get("api_calls", [])) or len(results.get("api_calls") or [])
+    total_query_params = sum(
+        len(parse_qsl(urlparse(url).query, keep_blank_values=True))
+        for url in discovered_pages
+    )
+
+    active_seconds = (
+        45
+        + (total_pages * 28)
+        + (total_forms * 14)
+        + (min(total_inputs, 250) * 1)
+        + (total_query_params * 7)
+        + (min(total_api_calls, 150) * 0.4)
+    )
+    return max(discovery_elapsed_seconds + 60, int(discovery_elapsed_seconds + active_seconds))
 
 
 # ── Async element collector (mirrors sync version in crawler.py) ───
@@ -605,7 +640,9 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
     start_url  = normalise_url(target_url)
     max_pages  = cfg.get("max_pages", 20)
     max_depth  = cfg.get("max_depth", 2)
-    scan_time  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    started_at = datetime.now()
+    scan_time  = started_at.strftime("%Y-%m-%d %H:%M:%S")
+    probe_timeout = int(cfg.get("network_probe_timeout_seconds", 4))
 
     api_calls      = set()
     visited_pages  = set()
@@ -615,6 +652,9 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
     results = {
         "target":                    start_url,
         "scan_time":                 scan_time,
+        "scan_started_at":           started_at.isoformat(timespec="seconds"),
+        "scan_completed_at":         None,
+        "elapsed_seconds":           None,
         "pages":                     [],
         "forms":                     [],
         "inputs":                    [],
@@ -645,17 +685,25 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
     }
 
     def publish(current_step: str, **extra) -> None:
+        progress_extra = dict(extra)
+        pages_scanned = progress_extra.pop("pages_scanned", 0)
+        pages_total = progress_extra.pop("pages_total", len(visited_pages) + len(pending_pages))
+        scan_phase = progress_extra.pop("scan_phase", "discovery")
         _emit_progress(
             progress,
             current_step,
             pages_found=len(visited_pages),
+            pages_known=len(visited_pages) + len(pending_pages),
+            pages_scanned=pages_scanned,
+            pages_total=pages_total,
+            scan_phase=scan_phase,
             forms_found=len(results["forms"]),
             inputs_found=len(results["inputs"]),
             buttons_found=len(results["buttons"]),
             api_calls_found=len(api_calls),
             findings_found=len(results["findings"]),
             pending_pages=len(pending_pages),
-            **extra,
+            **progress_extra,
         )
         _emit_event(progress, "info", "scan", current_step, **extra)
 
@@ -739,75 +787,19 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         )
         publish("Cookies analyzed", cookies_found=len(results["cookies"]))
 
-        # ── Crawl + interact ───────────────────────────────────────
-        publish("Discovering page elements")
+        # ── Discovery pass ─────────────────────────────────────────
+        publish("Discovering page elements", scan_phase="discovery")
         new_links = await _collect_elements_async(page, start_url, results, progress)
-        publish("Initial elements discovered")
+        publish("Initial elements discovered", scan_phase="discovery")
         for lnk in new_links - visited_pages:
             pending_pages.add((lnk, 1))
 
-        publish("Detecting authentication surface")
-        results["auth_surface"] = detect_auth_surface(
-            start_url,
-            sorted(visited_pages),
-            results["forms"],
-            results["inputs"],
-            results["buttons"],
-            sorted(api_calls),
-        )
-        publish("Authentication surface detection complete")
-
-        publish("Testing open redirects")
-        results["open_redirect"].extend(
-            await scan_open_redirect(page, start_url, cfg, progress)
-        )
-        publish(
-            "Open redirect testing complete",
-            open_redirect_findings=len(results["open_redirect"]),
-        )
-
-        publish("Testing DOM-based XSS")
-        results["dom_xss"].extend(
-            await scan_dom_xss(page, start_url, cfg, progress)
-        )
-        publish(
-            "DOM-based XSS testing complete",
-            dom_xss_findings=len(results["dom_xss"]),
-        )
-
-        publish("Testing reflected XSS")
-        results["reflected_xss"].extend(
-            await scan_reflected_xss(page, start_url, cfg, progress)
-        )
-        publish(
-            "Reflected XSS testing complete",
-            reflected_xss_findings=len(results["reflected_xss"]),
-        )
-
-        publish("Testing stored XSS")
-        results["stored_xss"].extend(
-            await scan_stored_xss(page, start_url, cfg, progress)
-        )
-        publish(
-            "Stored XSS testing complete",
-            stored_xss_findings=len(results["stored_xss"]),
-        )
-
-        publish("Testing SQL injection")
-        results["sql_injection"].extend(
-            await scan_sql_injection(page, start_url, cfg, progress)
-        )
-        publish(
-            "SQL injection testing complete",
-            sql_injection_findings=len(results["sql_injection"]),
-        )
-
-        publish("Interacting with target page")
+        publish("Interacting with target page", scan_phase="discovery")
         inter_links = await _interact_async(
             page, start_url, results, api_calls,
             visited_pages, visited_states, cfg, progress
         )
-        publish("Target page interaction complete")
+        publish("Target page interaction complete", scan_phase="discovery")
         for lnk in inter_links - visited_pages:
             pending_pages.add((lnk, 1))
 
@@ -818,12 +810,13 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
                 continue
             if max_pages > 0 and len(visited_pages) >= max_pages:
                 print(f"\n⚠️  Page limit ({max_pages}) reached — stopping crawl")
+                publish("Page crawl limit reached", scan_phase="discovery")
                 break
             if max_depth > 0 and depth > max_depth:
                 continue
 
             visited_pages.add(next_url)
-            publish("Visiting page", current_url=next_url, current_depth=depth)
+            publish("Visiting page", current_url=next_url, current_depth=depth, scan_phase="discovery")
             print(f"\n🔗 Visiting (depth={depth}): {next_url}")
 
             try:
@@ -840,72 +833,182 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
                 continue
 
             more_links = await _collect_elements_async(page, next_url, results, progress)
-            publish("Page elements discovered", current_url=next_url, current_depth=depth)
+            publish("Page elements discovered", current_url=next_url, current_depth=depth, scan_phase="discovery")
             for lnk in more_links - visited_pages:
                 pending_pages.add((lnk, depth + 1))
-
-            publish("Testing open redirects", current_url=next_url, current_depth=depth)
-            results["open_redirect"].extend(
-                await scan_open_redirect(page, next_url, cfg, progress)
-            )
-            publish(
-                "Open redirect testing complete",
-                current_url=next_url,
-                current_depth=depth,
-                open_redirect_findings=len(results["open_redirect"]),
-            )
-
-            publish("Testing DOM-based XSS", current_url=next_url, current_depth=depth)
-            results["dom_xss"].extend(
-                await scan_dom_xss(page, next_url, cfg, progress)
-            )
-            publish(
-                "DOM-based XSS testing complete",
-                current_url=next_url,
-                current_depth=depth,
-                dom_xss_findings=len(results["dom_xss"]),
-            )
-
-            publish("Testing reflected XSS", current_url=next_url, current_depth=depth)
-            results["reflected_xss"].extend(
-                await scan_reflected_xss(page, next_url, cfg, progress)
-            )
-            publish(
-                "Reflected XSS testing complete",
-                current_url=next_url,
-                current_depth=depth,
-                reflected_xss_findings=len(results["reflected_xss"]),
-            )
-
-            publish("Testing stored XSS", current_url=next_url, current_depth=depth)
-            results["stored_xss"].extend(
-                await scan_stored_xss(page, next_url, cfg, progress)
-            )
-            publish(
-                "Stored XSS testing complete",
-                current_url=next_url,
-                current_depth=depth,
-                stored_xss_findings=len(results["stored_xss"]),
-            )
-
-            publish("Testing SQL injection", current_url=next_url, current_depth=depth)
-            results["sql_injection"].extend(
-                await scan_sql_injection(page, next_url, cfg, progress)
-            )
-            publish(
-                "SQL injection testing complete",
-                current_url=next_url,
-                current_depth=depth,
-                sql_injection_findings=len(results["sql_injection"]),
-            )
 
             il = await _interact_async(
                 page, next_url, results, api_calls,
                 visited_pages, visited_states, cfg, progress
             )
-            publish("Page interaction complete", current_url=next_url, current_depth=depth)
+            publish("Page interaction complete", current_url=next_url, current_depth=depth, scan_phase="discovery")
             for lnk in il - visited_pages:
                 pending_pages.add((lnk, depth + 1))
+
+        discovered_pages = sorted(visited_pages)
+        results["pages"] = discovered_pages
+        results["api_calls"] = sorted(api_calls)
+
+        publish("Detecting authentication surface", scan_phase="discovery")
+        results["auth_surface"] = detect_auth_surface(
+            start_url,
+            discovered_pages,
+            results["forms"],
+            results["inputs"],
+            results["buttons"],
+            sorted(api_calls),
+        )
+        publish("Authentication surface detection complete", scan_phase="discovery")
+
+        discovery_elapsed_seconds = max(
+            1,
+            int((datetime.now() - started_at).total_seconds()),
+        )
+        estimated_total_seconds = _estimate_total_scan_seconds(
+            discovered_pages,
+            {
+                **results,
+                "api_calls": sorted(api_calls),
+            },
+            discovery_elapsed_seconds,
+        )
+        publish(
+            "Scan workload estimated",
+            scan_phase="active_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=0,
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
+        # ── Active page testing pass ───────────────────────────────
+        total_pages = len(discovered_pages)
+        for page_index, current_url in enumerate(discovered_pages, start=1):
+            publish(
+                "Scanning discovered page",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index - 1,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+            )
+
+            try:
+                resp = await page.goto(
+                    current_url,
+                    wait_until="networkidle",
+                    timeout=cfg["page_timeout"],
+                )
+            except Exception as e:
+                print(f"   ⚠️  Error loading {current_url} for active testing: {e}")
+                continue
+
+            if resp is None:
+                continue
+
+            publish(
+                "Testing open redirects",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index - 1,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+            )
+            results["open_redirect"].extend(
+                await scan_open_redirect(page, current_url, cfg, progress)
+            )
+            publish(
+                "Open redirect testing complete",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+                open_redirect_findings=len(results["open_redirect"]),
+            )
+
+            publish(
+                "Testing DOM-based XSS",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index - 1,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+            )
+            results["dom_xss"].extend(
+                await scan_dom_xss(page, current_url, cfg, progress)
+            )
+            publish(
+                "DOM-based XSS testing complete",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+                dom_xss_findings=len(results["dom_xss"]),
+            )
+
+            publish(
+                "Testing reflected XSS",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index - 1,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+            )
+            results["reflected_xss"].extend(
+                await scan_reflected_xss(page, current_url, cfg, progress)
+            )
+            publish(
+                "Reflected XSS testing complete",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+                reflected_xss_findings=len(results["reflected_xss"]),
+            )
+
+            publish(
+                "Testing stored XSS",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index - 1,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+            )
+            results["stored_xss"].extend(
+                await scan_stored_xss(page, current_url, cfg, progress)
+            )
+            publish(
+                "Stored XSS testing complete",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+                stored_xss_findings=len(results["stored_xss"]),
+            )
+
+            publish(
+                "Testing SQL injection",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index - 1,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+            )
+            results["sql_injection"].extend(
+                await scan_sql_injection(page, current_url, cfg, progress)
+            )
+            publish(
+                "SQL injection testing complete",
+                current_url=current_url,
+                pages_total=total_pages,
+                pages_scanned=page_index,
+                scan_phase="active_scan",
+                estimated_total_seconds=estimated_total_seconds,
+                sql_injection_findings=len(results["sql_injection"]),
+            )
 
         if results["open_redirect"]:
             results["findings"].append({
@@ -962,80 +1065,179 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
                 "sqli_vectors": results["sql_injection"],
             })
 
-        publish("Refreshing authentication surface classification")
-        results["auth_surface"] = detect_auth_surface(
-            start_url,
-            sorted(visited_pages),
-            results["forms"],
-            results["inputs"],
-            results["buttons"],
-            sorted(api_calls),
+        publish(
+            "Finalizing post-crawl checks",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
         )
-        publish("Authentication coverage classification complete")
 
         # ── SSL (sync — no browser needed) ────────────────────────
         print("\n🔒 Validating SSL Certificate...")
         print("\nInspecting HTTP methods...")
-        publish("Checking HTTP methods")
+        publish(
+            "Checking HTTP methods",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["http_methods"] = analyze_http_methods(
             start_url, results["findings"], cfg
         )
-        publish("HTTP methods checked")
+        publish(
+            "HTTP methods checked",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
 
-        publish("Validating SSL certificate")
+        publish(
+            "Validating SSL certificate",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["ssl"] = check_ssl(start_url)
         evaluate_ssl(results["ssl"], results["findings"])
-        publish("SSL validation complete")
+        publish(
+            "SSL validation complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
 
         # ── Sensitive path probing (sync — urllib, no browser) ────
         print("\n🗂️  Probing Sensitive Paths...")
-        publish("Probing sensitive paths")
-        results["sensitive_paths"] = probe_sensitive_paths(
-            start_url, results["findings"]
+        publish(
+            "Probing sensitive paths",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
         )
-        publish("Sensitive path probing complete",
-                sensitive_paths_found=len([
-                    p for p in results["sensitive_paths"]
-                    if p.get("severity") not in (None, "none", "Info")
-                ]))
+        results["sensitive_paths"] = probe_sensitive_paths(
+            start_url, results["findings"], timeout=probe_timeout
+        )
+        publish(
+            "Sensitive path probing complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+            sensitive_paths_found=len([
+                p for p in results["sensitive_paths"]
+                if p.get("severity") not in (None, "none", "Info")
+            ]),
+        )
 
         # ── CORS security analysis (sync — urllib, no browser) ────
         print("\n🌐 Analyzing CORS Security...")
-        publish("Analyzing CORS security")
-        results["cors_analysis"] = analyze_cors_security(
-            start_url, results["findings"]
+        publish(
+            "Analyzing CORS security",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
         )
-        publish("CORS analysis complete",
-                cors_issues_found=len(results["cors_analysis"].get("issues", [])))
+        results["cors_analysis"] = analyze_cors_security(
+            start_url, results["findings"], timeout=probe_timeout
+        )
+        publish(
+            "CORS analysis complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+            cors_issues_found=len(results["cors_analysis"].get("issues", [])),
+        )
 
         print("\nReviewing CSRF risk indicators...")
-        publish("Analyzing CSRF risk")
+        publish(
+            "Analyzing CSRF risk",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["csrf"] = analyze_csrf_risk(
             results["forms"], results["inputs"], results["cookies"], results["findings"]
         )
-        publish("CSRF risk analysis complete")
+        publish(
+            "CSRF risk analysis complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
 
         print("\nChecking for verbose error leakage...")
-        publish("Testing error handling")
+        publish(
+            "Testing error handling",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["verbose_errors"] = scan_verbose_errors(start_url, results["findings"])
-        publish("Error handling analysis complete")
+        publish(
+            "Error handling analysis complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
 
         print("\nFingerprinting application technology...")
-        publish("Fingerprinting technology")
+        publish(
+            "Fingerprinting technology",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["technology_fingerprint"] = fingerprint_technology(
             start_url, initial_html, dict(response.headers), sorted(api_calls)
         )
-        publish("Technology fingerprinting complete")
+        publish(
+            "Technology fingerprinting complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
 
         print("\nTesting GraphQL introspection exposure...")
-        publish("Checking GraphQL introspection")
+        publish(
+            "Checking GraphQL introspection",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["graphql"] = scan_graphql_introspection(
             start_url, sorted(api_calls), results["findings"], cfg
         )
-        publish("GraphQL introspection check complete")
+        publish(
+            "GraphQL introspection check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
 
         print("\nScanning JavaScript for exposed secrets...")
-        publish("Scanning JavaScript for secrets")
+        publish(
+            "Scanning JavaScript for secrets",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["javascript_secrets"] = scan_javascript_secrets(
             start_url,
             sorted(visited_pages),
@@ -1045,42 +1247,106 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         )
         publish(
             "JavaScript secret scan complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
             javascript_secrets_found=len(results["javascript_secrets"].get("detections", [])),
         )
 
         print("\nChecking for exposed JavaScript source maps...")
-        publish("Checking source maps")
+        publish(
+            "Checking source maps",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["source_maps"] = scan_source_maps(
             start_url, sorted(api_calls), results["findings"]
         )
-        publish("Source map check complete")
+        publish(
+            "Source map check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
 
         print("\nChecking for directory listing exposure...")
-        publish("Checking directory listing")
+        publish(
+            "Checking directory listing",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["directory_listing"] = scan_directory_listing(
             sorted(visited_pages), results["findings"]
         )
-        publish("Directory listing check complete")
+        publish(
+            "Directory listing check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
 
         print("\nChecking for forced browsing hits...")
-        publish("Checking forced browsing")
+        publish(
+            "Checking forced browsing",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["forced_browsing"] = scan_forced_browsing(
             start_url, sorted(visited_pages), results["findings"], cfg
         )
-        publish("Forced browsing check complete")
+        publish(
+            "Forced browsing check complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
 
         print("\nTesting API rate limiting...")
-        publish("Testing API rate limiting")
+        publish(
+            "Testing API rate limiting",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
         results["api_rate_limiting"] = scan_api_rate_limits(
             start_url, sorted(api_calls), results["findings"], cfg
         )
-        publish("API rate limiting test complete")
+        publish(
+            "API rate limiting test complete",
+            scan_phase="post_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=len(discovered_pages),
+            estimated_total_seconds=estimated_total_seconds,
+        )
 
         await browser.close()
 
+    finished_at = datetime.now()
     results["pages"]     = sorted(visited_pages)
     results["api_calls"] = sorted(api_calls)
-    publish("Scan complete")
+    results["scan_completed_at"] = finished_at.isoformat(timespec="seconds")
+    results["elapsed_seconds"] = max(
+        0,
+        int((finished_at - started_at).total_seconds()),
+    )
+    publish(
+        "Scan complete",
+        scan_phase="completed",
+        pages_total=len(results["pages"]),
+        pages_scanned=len(results["pages"]),
+        estimated_total_seconds=results["elapsed_seconds"],
+    )
 
     print(f"\n🔗 Pages Discovered:      {len(results['pages'])}")
     print(f"📝 Forms Discovered:      {len(results['forms'])}")

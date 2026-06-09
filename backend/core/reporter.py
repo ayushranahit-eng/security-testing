@@ -31,6 +31,9 @@ TRACKING_COOKIE_PREFIXES = (
 
 def generate_readable_json(data: dict, scan_time: str) -> dict:
     target_url = data.get("target", "")
+    completed_at = data.get("scan_completed_at") or scan_time
+    started_at = data.get("scan_started_at")
+    elapsed_seconds = data.get("elapsed_seconds")
     findings = data.get("findings", [])
     api_analysis = _classify_network_calls(target_url, data.get("api_calls", []))
     auth_surface_analysis = _analyze_auth_surface(data.get("auth_surface", {}))
@@ -57,7 +60,9 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
     return {
         "scan_metadata": {
             "target": target_url,
-            "scan_completed_at": scan_time,
+            "scan_started_at": started_at,
+            "scan_completed_at": completed_at,
+            "elapsed_seconds": elapsed_seconds,
             "status": "completed",
             "coverage": {
                 "scan_mode": "unauthenticated_public",
