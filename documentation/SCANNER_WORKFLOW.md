@@ -11,8 +11,9 @@
 7. Run low-risk active validation checks such as open redirect, DOM-based XSS, reflected XSS, stored XSS, and SQL injection heuristics.
 8. Interact with safe form fields and buttons.
 9. Capture frontend-triggered API calls.
-10. Run security checks and content analysis, including JavaScript secret scanning.
-11. Generate raw and readable results.
+10. Run protocol and exposure checks such as HTTP method review, verbose error checks, source maps, directory listing, and forced browsing.
+11. Run security checks and content analysis, including CSRF risk review, GraphQL introspection checks, API throttling checks, technology fingerprinting, and JavaScript secret scanning.
+12. Generate raw and readable results.
 
 ## Discovery Phase
 
@@ -34,7 +35,16 @@ The backend currently checks:
 - Security headers: CSP, X-Frame-Options, HSTS, X-Content-Type-Options, Referrer-Policy.
 - Cookies: Secure, HttpOnly, SameSite.
 - SSL/TLS: certificate validity, expiry, and trust status.
+- HTTP methods: risky methods such as TRACE, PUT, DELETE, and PATCH when publicly exposed.
+- Technology fingerprinting: likely server, CMS, frontend, and API indicators.
+- GraphQL introspection: publicly exposed GraphQL schema metadata.
+- API rate limiting: whether an exposed API-like endpoint shows basic throttling behavior.
+- CSRF risk: POST forms without obvious anti-CSRF token indicators.
 - JavaScript secrets: exposed API keys, tokens, JWT-like strings, and high-entropy assignments in first-party JS.
+- JavaScript source maps: public access to `.map` files for production JS.
+- Directory listing: web-server directory index exposure.
+- Forced browsing: direct access to common unlinked internal or administrative paths.
+- Verbose errors: stack traces, SQL errors, and framework exception leakage.
 - Open redirects: redirect-style parameters and safe GET redirect flows.
 - DOM-based XSS: client-side rendering of attacker-controlled fragment input.
 - Reflected XSS: unsanitized HTML reflection in low-risk URL parameters and safe forms.
@@ -70,8 +80,9 @@ These rules are stored in `backend/config.py`.
 The current scanner now performs an initial active validation layer, but still has important depth gaps:
 
 - authenticated workflow testing
+- deeper authorization and object-level access testing
 - stored XSS testing
 - stronger SQL injection confirmation logic
-- technology fingerprinting
+- SSRF and XXE validation
 - library and CVE detection
 - authentication and authorization checks

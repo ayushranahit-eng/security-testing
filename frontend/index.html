@@ -68,10 +68,22 @@
 
       <div class="metrics-grid">
         <div><span id="pagesMetric">0</span><small>Pages crawled</small></div>
+        <div><span id="pagesKnownMetric">0</span><small>Pages counted</small></div>
         <div><span id="formsMetric">0</span><small>Forms found</small></div>
         <div><span id="inputsMetric">0</span><small>Inputs discovered</small></div>
         <div><span id="apiMetric">0</span><small>Network calls</small></div>
         <div><span id="findingsMetric">0</span><small>Findings so far</small></div>
+      </div>
+
+      <div class="timing-strip">
+        <div class="timing-card wide">
+          <div id="etaLoading" class="eta-loading">
+            <span class="spinner" aria-hidden="true"></span>
+            <strong>Calculating estimated time...</strong>
+          </div>
+          <strong id="etaMetric" class="hidden">Estimating...</strong>
+          <span id="timeLabel">Estimated remaining</span>
+        </div>
       </div>
 
       <div class="live-body">
@@ -97,7 +109,7 @@
           <p class="eyebrow">Security report</p>
           <h2>Your scan report is ready</h2>
         </div>
-        <button id="pdfBtn" class="primary-btn" type="button">Save as PDF</button>
+        <button id="pdfBtn" class="primary-btn" type="button">Download PDF</button>
       </div>
 
       <article id="report" class="report-document">
@@ -131,23 +143,13 @@
         </section>
 
         <section class="report-section">
-          <h3>Top Security Priorities</h3>
-          <div id="topRisks" class="finding-list"></div>
-        </section>
-
-        <section class="report-section">
           <h3>Evidence And Attack Surface</h3>
           <div id="attackSurface" class="two-column"></div>
         </section>
 
         <section class="report-section">
-          <h3>Security Control Analysis</h3>
-          <div id="controlAnalysis" class="finding-list"></div>
-        </section>
-
-        <section class="report-section">
-          <h3>Detailed Findings</h3>
-          <div id="findingDetails" class="finding-list"></div>
+          <h3>Findings</h3>
+          <div id="assessmentList" class="finding-list"></div>
         </section>
 
         <section class="report-section cta-section">
@@ -179,6 +181,15 @@
               </div>
             </div>
             <a class="cta-button" href="https://handsintechnology.com" target="_blank" rel="noreferrer">Visit handsintechnology.com</a>
+          </div>
+        </section>
+
+        <section class="report-section disclaimer-section">
+          <div class="disclaimer-card">
+            <h3>Assessment Disclaimer</h3>
+            <p>
+              This report is an automated security assessment based on the tested scope and current scan logic. Findings can identify real weaknesses and meaningful risk signals, but critical issues should still be manually validated. A clean report does not guarantee that the application is secure or fully free from vulnerabilities.
+            </p>
           </div>
         </section>
       </article>

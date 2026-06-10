@@ -247,7 +247,7 @@ input {
 .metrics-grid,
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -277,6 +277,57 @@ input {
 .summary-grid div {
   border-left: 4px solid var(--blue);
   background: #fbfcff;
+}
+
+.timing-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.timing-strip div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcff;
+}
+
+.timing-strip .wide {
+  width: 100%;
+}
+
+.eta-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #d0d5dd;
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.timing-strip strong {
+  display: block;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.timing-strip span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .live-body {
@@ -562,6 +613,30 @@ input {
   margin: 8px 0;
 }
 
+.assessment-head {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.assessment-number {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f2f4f7;
+  color: var(--black);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.assessment-title-wrap h4 {
+  margin: 2px 0 8px;
+}
+
 .finding-card code,
 .evidence-card code {
   display: block;
@@ -582,6 +657,11 @@ input {
 
 .cta-section {
   border-bottom: 0;
+}
+
+.disclaimer-section {
+  border-bottom: 0;
+  padding-top: 8px;
 }
 
 .cta-section a {
@@ -658,6 +738,24 @@ input {
   color: #ffffff !important;
   background: var(--blue);
   text-decoration: none;
+}
+
+.disclaimer-card {
+  border: 1px solid #d6dbe6;
+  border-radius: 8px;
+  padding: 18px;
+  background: #f8fafc;
+}
+
+.disclaimer-card h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.disclaimer-card p {
+  margin: 0;
+  color: #475467;
+  line-height: 1.6;
 }
 
 @media (max-width: 860px) {
