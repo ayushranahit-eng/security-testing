@@ -590,6 +590,11 @@ input {
   background: #f2f4f7;
 }
 
+.finding-meta .finding-type {
+  background: #eef2ff;
+  color: #3538cd;
+}
+
 .finding-meta .sev-critical,
 .finding-meta .sev-high {
   background: var(--soft-red);

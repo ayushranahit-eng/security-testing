@@ -271,7 +271,7 @@ function renderScope(summary) {
     ["Inputs found", scope.input_fields_found || 0],
     ["Network requests", scope.network_requests_captured || 0],
     ["Checks performed", checks.implemented_public_checks || 0],
-    ["Findings detected", checks.findings_detected ?? ((counts.Critical || 0) + (counts.High || 0) + (counts.Medium || 0) + (counts.Low || 0))]
+    ["Actionable findings", checks.actionable_findings ?? checks.findings_detected ?? ((counts.Critical || 0) + (counts.High || 0) + (counts.Medium || 0) + (counts.Low || 0))]
   ];
   grid.innerHTML = cards.map(([label, value]) => `
     <div><strong>${value}</strong><span>${label}</span></div>
@@ -320,6 +320,7 @@ function renderAssessment(report) {
           <h4>${escapeHtml(item.title || "Security finding")}</h4>
           <div class="finding-meta">
             <span class="${severityClass(item.severity)}">${escapeHtml(item.severity || "Info")}</span>
+            ${item.finding_type ? `<span class="finding-type">${escapeHtml(item.finding_type)}</span>` : ""}
             ${item.priority ? `<span>${escapeHtml(item.priority)}</span>` : ""}
             ${item.confidence ? `<span>Confidence: ${escapeHtml(item.confidence)}</span>` : ""}
           </div>
