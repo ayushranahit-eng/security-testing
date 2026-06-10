@@ -27,6 +27,7 @@ TRACKING_COOKIE_PREFIXES = (
     "_ga", "_gid", "_gcl", "_fbp", "_gat", "test_cookie",
     "twk_", "tawk", "Tawk",
 )
+IMPLEMENTED_PUBLIC_CAPABILITY_COUNT = 47
 
 
 def generate_readable_json(data: dict, scan_time: str) -> dict:
@@ -73,6 +74,47 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
     finding_analysis = _analyze_findings(findings)
     counts = _severity_counts(finding_analysis["findings"])
 
+    security_analysis = {
+        "auth_surface": auth_surface_analysis,
+        "headers": _analyze_headers(data.get("security_headers", {})),
+        "ssl": _analyze_ssl(data.get("ssl", {})),
+        "ssl_expiry_monitor": ssl_expiry_monitor_analysis,
+        "cookies": cookie_analysis,
+        "certificate_transparency": ct_analysis,
+        "new_subdomain_alert": new_subdomain_analysis,
+        "subdomain_takeover": subdomain_takeover_analysis,
+        "header_regression": header_regression_analysis,
+        "asset_drift": asset_drift_analysis,
+        "passive_host_intelligence": passive_host_analysis,
+        "domain_credential_leaks": domain_credential_leak_analysis,
+        "server_header_disclosure": server_header_analysis,
+        "http_methods": http_method_analysis,
+        "javascript_secrets": js_secret_analysis,
+        "html_secrets": html_secret_analysis,
+        "technology": technology_analysis,
+        "domain_posture": domain_posture_analysis,
+        "dnssec": dnssec_analysis,
+        "open_ports": open_port_analysis,
+        "graphql": graphql_analysis,
+        "api_versioning": api_version_analysis,
+        "api_rate_limiting": api_rate_limit_analysis,
+        "csrf": csrf_analysis,
+        "source_maps": source_map_analysis,
+        "path_traversal": path_traversal_analysis,
+        "http_response_splitting": response_splitting_analysis,
+        "directory_listing": directory_listing_analysis,
+        "forced_browsing": forced_browsing_analysis,
+        "verbose_errors": verbose_error_analysis,
+        "dom_xss": dom_xss_analysis,
+        "open_redirect": open_redirect_analysis,
+        "reflected_xss": reflected_xss_analysis,
+        "stored_xss": stored_xss_analysis,
+        "sql_injection": sql_injection_analysis,
+        "sensitive_paths": sensitive_analysis,
+        "cors": _analyze_cors_for_readable_report(data.get("cors_analysis", {})),
+    }
+    assessment_items = _build_assessment_items_readable(security_analysis, finding_analysis["findings"])
+
     return {
         "scan_metadata": {
             "target": target_url,
@@ -96,6 +138,14 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
                 "buttons_observed": len(data.get("buttons", [])),
                 "network_requests_captured": len(data.get("api_calls", [])),
                 "cookies_analyzed": len(data.get("cookies", [])),
+            },
+            "checks_performed": {
+                "implemented_public_checks": IMPLEMENTED_PUBLIC_CAPABILITY_COUNT,
+                "findings_detected": len(finding_analysis["findings"]),
+                "checks_without_actionable_finding": max(
+                    0,
+                    IMPLEMENTED_PUBLIC_CAPABILITY_COUNT - len(finding_analysis["findings"]),
+                ),
             },
             "finding_counts": counts,
             "top_risks": finding_analysis["top_risks"],
@@ -129,45 +179,8 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
             "inputs": _summarize_inputs(data.get("inputs", [])),
             "network": api_analysis,
         },
-        "security_analysis": {
-            "auth_surface": auth_surface_analysis,
-            "headers": _analyze_headers(data.get("security_headers", {})),
-            "ssl": _analyze_ssl(data.get("ssl", {})),
-            "ssl_expiry_monitor": ssl_expiry_monitor_analysis,
-            "cookies": cookie_analysis,
-            "certificate_transparency": ct_analysis,
-            "new_subdomain_alert": new_subdomain_analysis,
-            "subdomain_takeover": subdomain_takeover_analysis,
-            "header_regression": header_regression_analysis,
-            "asset_drift": asset_drift_analysis,
-            "passive_host_intelligence": passive_host_analysis,
-            "domain_credential_leaks": domain_credential_leak_analysis,
-            "server_header_disclosure": server_header_analysis,
-            "http_methods": http_method_analysis,
-            "javascript_secrets": js_secret_analysis,
-            "html_secrets": html_secret_analysis,
-            "technology": technology_analysis,
-            "domain_posture": domain_posture_analysis,
-            "dnssec": dnssec_analysis,
-            "open_ports": open_port_analysis,
-            "graphql": graphql_analysis,
-            "api_versioning": api_version_analysis,
-            "api_rate_limiting": api_rate_limit_analysis,
-            "csrf": csrf_analysis,
-            "source_maps": source_map_analysis,
-            "path_traversal": path_traversal_analysis,
-            "http_response_splitting": response_splitting_analysis,
-            "directory_listing": directory_listing_analysis,
-            "forced_browsing": forced_browsing_analysis,
-            "verbose_errors": verbose_error_analysis,
-            "dom_xss": dom_xss_analysis,
-            "open_redirect": open_redirect_analysis,
-            "reflected_xss": reflected_xss_analysis,
-            "stored_xss": stored_xss_analysis,
-            "sql_injection": sql_injection_analysis,
-            "sensitive_paths": sensitive_analysis,
-            "cors": _analyze_cors_for_readable_report(data.get("cors_analysis", {})),
-        },
+        "security_analysis": security_analysis,
+        "assessment_items": assessment_items,
         "findings": finding_analysis["findings"],
         "recommended_actions": _generate_next_steps(findings, data, api_analysis, sensitive_analysis),
         "raw_data": {
@@ -1606,6 +1619,500 @@ def _generate_next_steps(findings: list, data: dict, api_analysis: dict, sensiti
         steps.append("Extend input validation testing beyond the automated checks: authenticated reflected/stored XSS, SQL injection, file upload abuse, and server-side validation bypass.")
     steps.append("Re-run the scan after fixes and compare the findings count plus exposed path list.")
     return {"priority_order": steps}
+
+
+def _build_assessment_items_readable(security_analysis: dict, findings: list) -> list[dict]:
+    ordered_keys = [
+        "headers",
+        "ssl",
+        "ssl_expiry_monitor",
+        "cookies",
+        "certificate_transparency",
+        "new_subdomain_alert",
+        "subdomain_takeover",
+        "header_regression",
+        "asset_drift",
+        "passive_host_intelligence",
+        "domain_credential_leaks",
+        "auth_surface",
+        "server_header_disclosure",
+        "http_methods",
+        "javascript_secrets",
+        "html_secrets",
+        "technology",
+        "domain_posture",
+        "dnssec",
+        "open_ports",
+        "graphql",
+        "api_versioning",
+        "api_rate_limiting",
+        "csrf",
+        "source_maps",
+        "path_traversal",
+        "http_response_splitting",
+        "directory_listing",
+        "forced_browsing",
+        "verbose_errors",
+        "dom_xss",
+        "open_redirect",
+        "reflected_xss",
+        "stored_xss",
+        "sql_injection",
+        "sensitive_paths",
+        "cors",
+    ]
+
+    items = []
+    for key in ordered_keys:
+        item = security_analysis.get(key)
+        if not isinstance(item, dict):
+            continue
+        items.append(_assessment_item_from_analysis(key, item))
+
+    covered_vulnerabilities = {
+        "Missing Security Headers",
+        "Missing CSP Header",
+        "Missing HSTS",
+        "Missing X-Frame-Options",
+        "Missing X-Content-Type",
+        "Missing X-Content-Type-Options",
+        "Insecure Cookie Flags",
+        "Weak Cookie Flags",
+        "Certificate Issues",
+        "SSL Certificate Issue",
+        "Weak TLS Protocol Supported",
+        "Weak Cipher Suites Accepted",
+        "SSL Certificate Expiry Monitor",
+        "Certificate Transparency Monitoring",
+        "New Subdomain Alert",
+        "DNS Subdomain Takeover",
+        "Subdomain Takeover",
+        "Security Header Regression Alert",
+        "Exposed Asset Drift Detection",
+        "Shodan / Censys Passive Recon",
+        "IP Reputation Check",
+        "Shodan Exposure Score",
+        "Domain Credential Leak Check",
+        "Server Header Disclosure",
+        "HTTP Methods Enabled",
+        "HTTP TRACE Enabled",
+        "Secrets in JavaScript Files",
+        "JavaScript Secrets Exposed",
+        "Hardcoded Secrets in HTML",
+        "Technology Fingerprinting",
+        "Domain Age & Parking Detection",
+        "Missing DNSSEC",
+        "Open Port Scanning",
+        "GraphQL Introspection",
+        "API Version Abuse",
+        "API Rate Limiting Absent",
+        "CSRF",
+        "JavaScript Source Maps",
+        "Path Traversal",
+        "HTTP Response Splitting",
+        "Directory Listing Enabled",
+        "Forced Browsing",
+        "Verbose Error Messages",
+        "DOM-Based XSS",
+        "Open Redirect",
+        "Reflected XSS",
+        "Stored XSS",
+        "SQL Injection",
+        "Sensitive Path Detected",
+        "CORS Misconfiguration",
+    }
+
+    for finding in findings:
+        raw = finding.get("raw", {})
+        if raw.get("vulnerability") in covered_vulnerabilities:
+            continue
+        items.append({
+            "title": finding.get("title", "Security finding"),
+            "severity": finding.get("severity", "Info"),
+            "priority": finding.get("priority", "P3"),
+            "confidence": finding.get("confidence", "Medium"),
+            "status": finding.get("title", "Finding detected"),
+            "analysis": finding.get("impact", "Review this issue in application context."),
+            "evidence": finding.get("evidence_summary", "Evidence not available"),
+            "fix": finding.get("remediation", "Validate and remediate according to internal security standards."),
+        })
+
+    return items
+
+
+def _assessment_item_from_analysis(key: str, item: dict) -> dict:
+    title_map = {
+        "headers": "Security Headers",
+        "ssl": "SSL Certificate",
+        "ssl_expiry_monitor": "SSL Expiry Monitor",
+        "cookies": "Cookies",
+        "certificate_transparency": "Certificate Transparency Monitoring",
+        "new_subdomain_alert": "New Subdomain Alert",
+        "subdomain_takeover": "Subdomain Takeover",
+        "header_regression": "Security Header Regression Alert",
+        "asset_drift": "Public Attack-Surface Drift Detection",
+        "passive_host_intelligence": "Passive Host Intelligence",
+        "domain_credential_leaks": "Domain Credential Leak Check",
+        "auth_surface": "Authentication Coverage",
+        "server_header_disclosure": "Server Header Disclosure",
+        "http_methods": "HTTP Methods",
+        "javascript_secrets": "JavaScript Secret Exposure",
+        "html_secrets": "HTML Secret Exposure",
+        "technology": "Technology Fingerprinting",
+        "domain_posture": "Domain Age And Parking Detection",
+        "dnssec": "DNSSEC",
+        "open_ports": "Open Port Scanning",
+        "graphql": "GraphQL Introspection",
+        "api_versioning": "API Version Exposure",
+        "api_rate_limiting": "API Rate Limiting",
+        "csrf": "CSRF",
+        "source_maps": "Source Maps",
+        "path_traversal": "Path Traversal",
+        "http_response_splitting": "HTTP Response Splitting",
+        "directory_listing": "Directory Listing",
+        "forced_browsing": "Forced Browsing",
+        "verbose_errors": "Verbose Error Messages",
+        "dom_xss": "DOM-Based XSS",
+        "open_redirect": "Open Redirect",
+        "reflected_xss": "Reflected XSS",
+        "stored_xss": "Stored XSS",
+        "sql_injection": "SQL Injection",
+        "sensitive_paths": "Sensitive Paths",
+        "cors": "CORS",
+    }
+
+    severity = _assessment_severity(key, item)
+    return {
+        "title": title_map.get(key, key.replace("_", " ").title()),
+        "severity": severity,
+        "priority": _priority_for_severity(severity),
+        "confidence": "High" if item.get("status") not in {"Not run", "Not available"} else "Medium",
+        "status": str(item.get("status", "Not available")),
+        "analysis": _assessment_analysis_text(key, item),
+        "evidence": _assessment_evidence_text(key, item),
+        "fix": _assessment_fix_text(key),
+    }
+
+
+def _assessment_severity(key: str, item: dict) -> str:
+    status = str(item.get("status", "")).lower()
+    note = str(item.get("note", "")).lower()
+    combined = f"{status} {note}"
+
+    if key == "subdomain_takeover":
+        return "High" if item.get("suspected_takeovers") else "Low"
+    if key in {"path_traversal", "http_response_splitting", "dom_xss", "open_redirect", "reflected_xss", "stored_xss", "sql_injection"}:
+        count = item.get("count")
+        issues = item.get("issues") or item.get("vectors") or []
+        return "High" if count or issues else "Low"
+    if key in {"headers", "header_regression", "http_methods", "graphql", "api_rate_limiting", "csrf", "source_maps", "directory_listing", "forced_browsing", "verbose_errors"}:
+        if any(token in combined for token in ["missing", "regressed", "enabled", "no throttling", "without token", "detected", "exposed"]):
+            return "Medium"
+        return "Low"
+    if key in {"javascript_secrets", "html_secrets"}:
+        detections = item.get("top_detections") or item.get("detections") or []
+        return "High" if detections else "Low"
+    if key == "sensitive_paths":
+        if item.get("exposed_paths"):
+            return "Medium"
+        if item.get("blocked_paths"):
+            return "Low"
+        return "Info"
+    if key == "cors":
+        if "high" in combined:
+            return "High"
+        if "medium" in combined:
+            return "Medium"
+        return "Low"
+    if key in {"dnssec", "domain_posture", "passive_host_intelligence", "domain_credential_leaks", "open_ports", "new_subdomain_alert", "asset_drift"}:
+        if any(token in combined for token in ["detected", "missing", "reachable", "observed", "matched"]):
+            return "Medium" if key in {"new_subdomain_alert", "asset_drift", "domain_credential_leaks"} else "Low"
+        return "Low"
+    return "Low"
+
+
+def _priority_for_severity(severity: str) -> str:
+    return {
+        "Critical": "P1",
+        "High": "P1",
+        "Medium": "P2",
+        "Low": "P4",
+        "Info": "P4",
+    }.get(severity, "P3")
+
+
+def _assessment_analysis_text(key: str, item: dict) -> str:
+    fallback = str(item.get("note") or item.get("engineer_summary") or "Review this result in application context.")
+    custom = {
+        "auth_surface": "If login, signup, or password reset functionality exists, a public-only scan cannot be treated as full application assurance.",
+        "headers": "Missing browser protections can increase exposure to XSS impact, clickjacking, MIME sniffing, referrer leakage, and HTTPS downgrade risk.",
+        "ssl": "Certificate validity, expiry, negotiated protocol, and cipher posture were reviewed for the public HTTPS surface.",
+        "ssl_expiry_monitor": "The scanner compared certificate lifetime against the configured renewal threshold.",
+        "cookies": "Cookie findings should be separated into real session cookies versus analytics or marketing cookies before triage.",
+        "certificate_transparency": "Certificate transparency records help inventory externally visible subdomains and unexpected certificate issuance.",
+        "new_subdomain_alert": "This compares the current certificate-transparency-backed subdomain set against the last saved baseline.",
+        "subdomain_takeover": "Dangling third-party service bindings can let attackers claim content on a trusted subdomain.",
+        "header_regression": "A previously present browser-security header disappearing can silently reopen exposure.",
+        "asset_drift": "Unexpected new pages or API calls can signal feature rollout, shadow endpoints, or accidental exposure.",
+        "passive_host_intelligence": "Passive exposure data is enrichment rather than proof, but it often highlights internet-facing services worth review.",
+        "domain_credential_leaks": "Public breach records tied to the domain can raise credential reuse and account-takeover risk.",
+        "server_header_disclosure": "Server, framework, or proxy banners can help attackers fingerprint the stack faster.",
+        "http_methods": "Unnecessary HTTP methods can expand attack surface or suggest weak request hardening.",
+        "javascript_secrets": "Frontend-delivered secrets can be harvested by any visitor and may enable downstream API abuse.",
+        "html_secrets": "Secrets rendered into HTML or inline configuration should be treated as exposed.",
+        "technology": "Externally visible framework, CMS, or server markers help with stack fingerprinting.",
+        "domain_posture": "Very new or parked domains can deserve extra review before being treated as stable production assets.",
+        "dnssec": "DNSSEC adds authenticity signals to DNS resolution for the public zone.",
+        "open_ports": "Extra internet-facing ports can reveal administrative, development, or datastore services.",
+        "graphql": "Public GraphQL schema metadata can accelerate reconnaissance.",
+        "api_versioning": "Reachable sibling API versions can drift from current security controls over time.",
+        "api_rate_limiting": "Weak or absent throttling can make scraping, brute force, or automated abuse easier.",
+        "csrf": "Browser-authenticated actions need request-forgery protections.",
+        "source_maps": "Source maps can reveal original code, comments, and implementation detail.",
+        "path_traversal": "File-style parameters are a common place for unsafe path joining and normalization mistakes.",
+        "http_response_splitting": "CRLF injection can affect browsers, proxies, caches, and downstream security controls.",
+        "directory_listing": "Directory indexes can expose internal file structure, backups, or forgotten assets.",
+        "forced_browsing": "Directly reachable but unlinked routes can expose internal-style functionality.",
+        "verbose_errors": "Stack traces, SQL errors, or framework exceptions can help attackers refine payloads.",
+        "dom_xss": "DOM-based XSS happens in browser-side code and can execute without server-side reflection.",
+        "open_redirect": "Redirect abuse can turn a trusted domain into a phishing or token-forwarding step.",
+        "reflected_xss": "Unsafely reflected input can execute in a victim's browser.",
+        "stored_xss": "Persisted attacker-controlled content can impact every later viewer of the affected page.",
+        "sql_injection": "Database error leakage or strong response anomalies can indicate unsafe query handling.",
+        "sensitive_paths": "HTTP 403 means blocked, not confirmed exposure. Readable sensitive paths deserve faster action.",
+        "cors": "Missing CORS alone is usually safe for browsers, but unsafe allowlists or reflected origins are not.",
+    }
+    return custom.get(key, fallback)
+
+
+def _assessment_evidence_text(key: str, item: dict) -> str:
+    if key == "headers":
+        return "\n".join(
+            f"{entry.get('header')}: {entry.get('impact')}"
+            for entry in item.get("missing", [])
+        ) or "No missing required headers reported"
+    if key == "ssl":
+        cipher = item.get("negotiated_cipher") or {}
+        return "\n".join([
+            f"Expires on: {item.get('expires_on', 'Unknown')}",
+            f"Days remaining: {item.get('days_remaining', 'Unknown')}",
+            f"Negotiated protocol: {item.get('negotiated_protocol', 'Unknown')}",
+            f"Negotiated cipher: {cipher.get('name', 'Unknown')}",
+        ])
+    if key == "ssl_expiry_monitor":
+        return "\n".join([
+            f"Days remaining: {item.get('days_remaining', 'Unknown')}",
+            f"Threshold days: {item.get('threshold_days', 'Unknown')}",
+            f"Current expiry: {item.get('current_expiry', 'Unknown')}",
+            f"Previous expiry: {item.get('previous_expiry', 'None')}",
+        ])
+    if key == "cookies":
+        return "\n".join(
+            f"{entry.get('name')} [{entry.get('category')}]: {entry.get('issue_summary')}"
+            for entry in item.get("notable_cookies", [])
+        ) or "No notable cookie issues reported"
+    if key == "certificate_transparency":
+        return "\n".join([
+            f"Domain: {item.get('domain', 'Unknown')}",
+            f"Certificates observed: {item.get('certificates_observed', 'Unknown')}",
+            f"Subdomains discovered: {', '.join(item.get('subdomains', [])[:10]) or 'None'}",
+        ])
+    if key == "new_subdomain_alert":
+        return "\n".join(item.get("new_subdomains", [])) or "No new subdomains detected or no previous baseline available"
+    if key == "subdomain_takeover":
+        return "\n".join(
+            f"{entry.get('subdomain')} - {entry.get('provider')} - {entry.get('cname') or 'no cname'}"
+            for entry in item.get("suspected_takeovers", [])
+        ) or "No takeover fingerprint detected"
+    if key == "header_regression":
+        return "\n".join(item.get("regressed_headers", [])) or "No regressed headers detected or no previous baseline available"
+    if key == "asset_drift":
+        details = []
+        for value in item.get("new_pages", [])[:5]:
+            details.append(f"New page observed: {value}")
+        for value in item.get("new_api_calls", [])[:5]:
+            details.append(f"New API call observed: {value}")
+        for value in item.get("removed_pages", [])[:5]:
+            details.append(f"Removed page: {value}")
+        for value in item.get("removed_api_calls", [])[:5]:
+            details.append(f"Removed API call: {value}")
+        return "\n".join(details) or "No public attack-surface drift detected or no previous baseline available"
+    if key == "passive_host_intelligence":
+        return "\n".join([
+            f"IP: {item.get('ip', 'Unknown')}",
+            f"Ports: {', '.join(str(port) for port in item.get('ports', [])) or 'None'}",
+            f"Tags: {', '.join(item.get('tags', [])) or 'None'}",
+            f"Vulns: {', '.join(item.get('vulns', [])) or 'None'}",
+            f"Exposure score: {item.get('exposure_score', 'Unknown')}/100",
+        ])
+    if key == "domain_credential_leaks":
+        return "\n".join(
+            f"{entry.get('domain')} - {entry.get('breach')}"
+            for entry in item.get("breaches", [])
+        ) or "No public breach catalog match found for the domain"
+    if key == "auth_surface":
+        return "\n".join([
+            f"Classification: {item.get('classification', 'unknown')}",
+            f"Assessment note: {item.get('note', 'Not available')}",
+            "Signals: " + (" | ".join(
+                f"{signal.get('type')}: {signal.get('value')}"
+                for signal in item.get("signals", [])
+            ) or "No auth-related signals detected"),
+        ])
+    if key == "server_header_disclosure":
+        return "\n".join(
+            f"{entry.get('header')}: {entry.get('value')}"
+            for entry in item.get("headers", [])
+        ) or "No notable disclosure headers detected"
+    if key == "http_methods":
+        return "\n".join([
+            f"Allowed methods: {', '.join(item.get('allow_methods', [])) or 'Not observed'}",
+            f"Dangerous methods: {', '.join(item.get('dangerous_methods', [])) or 'None'}",
+            f"TRACE enabled: {'Yes' if item.get('trace_enabled') else 'No'}",
+        ])
+    if key == "javascript_secrets":
+        return "\n".join(
+            f"{entry.get('type')} - {entry.get('source')} - {entry.get('value_preview')}"
+            for entry in item.get("top_detections", [])
+        ) or "No JavaScript secret exposure detected"
+    if key == "html_secrets":
+        return "\n".join(
+            f"{entry.get('type')} - {entry.get('source')} - {entry.get('value_preview')}"
+            for entry in item.get("detections", [])
+        ) or "No HTML secret exposure detected"
+    if key == "technology":
+        return "\n".join([
+            f"Frameworks: {', '.join(item.get('frameworks', [])) or 'None observed'}",
+            f"Servers: {', '.join(item.get('server_markers', [])) or 'None observed'}",
+            f"CMS markers: {', '.join(item.get('cms_markers', [])) or 'None observed'}",
+        ])
+    if key == "domain_posture":
+        return "\n".join([
+            f"Domain age days: {item.get('domain_age_days', 'Unknown')}",
+            f"Parked: {item.get('parked', 'Unknown')}",
+            f"Registrar: {item.get('registrar', 'Unknown')}",
+        ])
+    if key == "dnssec":
+        return "\n".join([
+            f"Domain: {item.get('domain', 'Unknown')}",
+            f"DNSSEC enabled: {'Yes' if item.get('dnssec_enabled') is True else 'No' if item.get('dnssec_enabled') is False else 'Unknown'}",
+            f"Error: {item.get('error', 'None')}",
+        ])
+    if key == "open_ports":
+        return "\n".join(
+            f"{entry.get('port')} ({entry.get('service')})"
+            for entry in item.get("open_ports", [])
+        ) or "No additional common open ports detected"
+    if key == "graphql":
+        return f"GraphQL findings: {item.get('count', 0)}"
+    if key == "api_versioning":
+        return "\n".join(
+            f"{entry.get('candidate_url')} - HTTP {entry.get('status')}"
+            for entry in item.get("reachable_versions", [])
+        ) or "No sibling API versions confirmed"
+    if key == "api_rate_limiting":
+        return "\n".join([
+            f"Tested endpoint: {item.get('tested_endpoint', 'None')}",
+            f"Probe statuses: {', '.join(str(status) for status in item.get('statuses', [])) or 'Not tested'}",
+            f"Throttled: {'Yes' if item.get('throttled') else 'No'}",
+        ])
+    if key == "csrf":
+        return f"POST forms without token signals: {item.get('count', 0)}"
+    if key == "source_maps":
+        return f"Source map findings: {item.get('count', 0)}"
+    if key == "path_traversal":
+        return "\n".join(
+            f"{entry.get('parameter')} - {entry.get('tested_url')} - {entry.get('evidence')}"
+            for entry in item.get("issues", [])
+        ) or "No path traversal signal detected"
+    if key == "http_response_splitting":
+        return "\n".join(
+            f"{entry.get('parameter')} - {entry.get('tested_url')}"
+            for entry in item.get("issues", [])
+        ) or "No response splitting signal detected"
+    if key == "directory_listing":
+        return f"Directory listing findings: {item.get('count', 0)}"
+    if key == "forced_browsing":
+        return f"Forced browsing findings: {item.get('count', 0)}"
+    if key == "verbose_errors":
+        return f"Verbose error evidence count: {item.get('count', 0)}"
+    if key in {"dom_xss", "open_redirect", "reflected_xss", "stored_xss", "sql_injection"}:
+        vectors = item.get("vectors", [])
+        if key == "open_redirect":
+            return "\n".join(
+                f"{entry.get('vector')} - {entry.get('tested_url')} -> {entry.get('redirect_target')}"
+                for entry in vectors
+            ) or "No open redirect detected in the tested flows"
+        if key == "sql_injection":
+            return "\n".join(
+                f"{entry.get('vector')} - {entry.get('tested_url')} - {entry.get('evidence')}"
+                for entry in vectors
+            ) or "No SQL injection signal detected in the tested flows"
+        label = {
+            "dom_xss": "No DOM-based XSS detected in the tested fragment flows",
+            "reflected_xss": "No reflected XSS detected in the tested flows",
+            "stored_xss": "No stored XSS detected in the tested flows",
+        }.get(key, "No signal detected")
+        return "\n".join(
+            f"{entry.get('vector')} - {entry.get('tested_url')}"
+            for entry in vectors
+        ) or label
+    if key == "sensitive_paths":
+        exposed = item.get("exposed_paths", [])
+        blocked = item.get("blocked_paths", [])
+        return "\n".join(
+            f"{entry.get('path')} - HTTP {entry.get('http_status')} - {entry.get('severity')}"
+            for entry in (exposed + blocked)[:10]
+        ) or "No sensitive path evidence reported"
+    if key == "cors":
+        return "\n".join(
+            f"{entry.get('issue_type')}: {entry.get('description')}"
+            for entry in item.get("issues", [])
+        ) or "No CORS issues reported"
+    return str(item.get("note") or item.get("engineer_summary") or "Evidence not available")
+
+
+def _assessment_fix_text(key: str) -> str:
+    fixes = {
+        "auth_surface": "Run an authenticated scan or manual review before treating the application as fully assessed.",
+        "headers": "Configure the missing headers at the web server, CDN, or application layer and keep them in the baseline going forward.",
+        "ssl": "Renew the certificate before expiry if needed and keep modern TLS protocol and cipher settings enabled.",
+        "ssl_expiry_monitor": "Renew the public certificate before the monitored threshold is reached and verify deployment everywhere HTTPS terminates.",
+        "cookies": "Harden real session cookies with Secure, HttpOnly, and SameSite after separating them from marketing cookies.",
+        "certificate_transparency": "Review CT-discovered subdomains regularly so new public assets do not bypass normal hardening and ownership checks.",
+        "new_subdomain_alert": "Review newly observed subdomains, confirm ownership and purpose, and apply the same security baseline as the main property.",
+        "subdomain_takeover": "Remove unused DNS records, reclaim abandoned third-party service bindings, and eliminate dangling CNAMEs.",
+        "header_regression": "Restore any previously present security headers that disappeared unintentionally and keep them under baseline monitoring.",
+        "asset_drift": "Review recently added or removed public routes and API calls, confirm they were intentional, and re-apply the security baseline to new assets.",
+        "passive_host_intelligence": "Compare passive host data with the intended public footprint and investigate any exposed services or vulnerability hints.",
+        "domain_credential_leaks": "Review breach history linked to the domain and strengthen credential hygiene where applicable.",
+        "server_header_disclosure": "Remove or generalize unnecessary server-identifying headers at the origin, reverse proxy, CDN, or framework layer.",
+        "http_methods": "Restrict allowed methods to only what the application needs and disable TRACE unless there is a specific operational requirement.",
+        "javascript_secrets": "Rotate exposed keys or tokens immediately and move privileged secrets out of frontend-delivered code.",
+        "html_secrets": "Remove secrets from rendered HTML, inline config, and hydration data, then rotate any exposed live credentials.",
+        "technology": "Review externally visible stack identifiers and remove avoidable banner or metadata leakage where practical.",
+        "domain_posture": "Validate ownership, registrar setup, and operational intent for newly registered or parked domains before production use.",
+        "dnssec": "Enable DNSSEC signing for the public zone and verify DS and DNSKEY records are published correctly.",
+        "open_ports": "Close unnecessary public ports at the firewall, security group, load balancer, or host level.",
+        "graphql": "Disable GraphQL introspection in production where possible or restrict it to trusted users and environments.",
+        "api_versioning": "Inventory every reachable API version, retire obsolete versions, and confirm security controls are consistent across them.",
+        "api_rate_limiting": "Apply rate limits, anomaly detection, and challenge controls on sensitive or high-value API endpoints.",
+        "csrf": "Use anti-CSRF tokens, validate Origin or Referer where appropriate, and pair them with stricter SameSite cookie protections.",
+        "source_maps": "Remove public source maps in production or restrict them to trusted users and debugging environments.",
+        "path_traversal": "Never use raw user input in filesystem paths, apply strict allowlists, normalize paths safely, and enforce a fixed boundary.",
+        "http_response_splitting": "Reject CRLF characters in header-influencing input and avoid copying raw user input into response headers.",
+        "directory_listing": "Disable auto-indexing on the web server and serve explicit index files or deny directory browsing.",
+        "forced_browsing": "Review unlinked but reachable routes and enforce authentication, authorization, or removal where appropriate.",
+        "verbose_errors": "Return generic production error responses and keep detailed exceptions only in internal logs.",
+        "dom_xss": "Avoid unsafe DOM sinks such as innerHTML for untrusted data and sanitize fragment or URL-derived input before rendering.",
+        "open_redirect": "Restrict redirect destinations to approved internal paths or allowlisted hosts and reject attacker-controlled absolute URLs.",
+        "reflected_xss": "Apply context-aware output encoding and review any parameter or form flow that reflects unsanitized HTML.",
+        "stored_xss": "Sanitize stored rich text safely, encode on output, and review any workflow that persists user-supplied HTML.",
+        "sql_injection": "Use parameterized queries, strict server-side validation, ORM-safe bindings, and suppress database error leakage to users.",
+        "sensitive_paths": "Remove or restrict readable sensitive files and treat blocked hits as route-existence signals rather than confirmed exposure.",
+        "cors": "Use an explicit allowlist of trusted origins and avoid credentials with wildcard or reflected origins.",
+    }
+    return fixes.get(key, "Validate and remediate according to internal security standards.")
 
 
 def _wrap(text: str, width: int) -> list:

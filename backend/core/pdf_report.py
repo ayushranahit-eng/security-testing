@@ -56,28 +56,14 @@ def _build_report_html(report: dict) -> str:
     summary = report.get("executive_summary", {})
     scope = summary.get("scope", {})
     counts = summary.get("finding_counts", {})
+    checks = summary.get("checks_performed", {})
     security = report.get("security_analysis", {})
-    findings = report.get("findings", [])
-    top_risks = summary.get("top_risks", [])
-    actions = report.get("recommended_actions", {}).get("priority_order", [])
     attack_surface = report.get("attack_surface_analysis", {})
 
     risk = escape(summary.get("risk_rating", "Informational"))
     target = escape(meta.get("target", "Security Assessment"))
     completed = escape(meta.get("scan_completed_at", ""))
     summary_text = escape(summary.get("summary", ""))
-
-    top_risk_cards = "".join(
-        _finding_card_html(item, compact=True) for item in top_risks
-    ) or '<div class="card"><h4>No high-priority findings</h4><p>No urgent automated findings were detected in this scan.</p></div>'
-
-    detailed_cards = "".join(
-        _finding_card_html(item, compact=False) for item in findings
-    ) or '<div class="card"><h4>No actionable findings</h4><p>The scan did not identify actionable findings in the tested scope.</p></div>'
-
-    action_items = "".join(
-        f"<li>{escape(step)}</li>" for step in actions
-    ) or "<li>Re-run the assessment after any remediation changes.</li>"
 
     surface_pages = attack_surface.get("pages", {})
     surface_inputs = attack_surface.get("inputs", {})
@@ -86,6 +72,16 @@ def _build_report_html(report: dict) -> str:
     headers = security.get("headers", {})
     cookies = security.get("cookies", {})
     auth_surface = security.get("auth_surface", {})
+    http_methods = security.get("http_methods", {})
+    server_header = security.get("server_header_disclosure", {})
+    technology = security.get("technology", {})
+    graphql = security.get("graphql", {})
+    api_rate_limiting = security.get("api_rate_limiting", {})
+    csrf = security.get("csrf", {})
+    source_maps = security.get("source_maps", {})
+    directory_listing = security.get("directory_listing", {})
+    forced_browsing = security.get("forced_browsing", {})
+    verbose_errors = security.get("verbose_errors", {})
     javascript_secrets = security.get("javascript_secrets", {})
     dom_xss = security.get("dom_xss", {})
     open_redirect = security.get("open_redirect", {})
@@ -97,129 +93,30 @@ def _build_report_html(report: dict) -> str:
     ssl = security.get("ssl", {})
     newline = "\n"
 
-    header_evidence = newline.join(
-        f"{item.get('header')}: {item.get('impact')}" for item in headers.get("missing", [])
-    ) or "No missing required headers reported"
-    cookie_evidence = newline.join(
-        f"{item.get('name')} [{item.get('category')}]: {item.get('issue_summary')}"
-        for item in cookies.get("notable_cookies", [])
-    ) or "No notable cookie issues reported"
-    auth_surface_evidence = newline.join(
-        f"{item.get('type')}: {item.get('value')}"
-        for item in auth_surface.get("signals", [])[:10]
-    ) or "No auth-related public-surface signals detected"
-    js_secret_evidence = newline.join(
-        f"{item.get('type')} - {item.get('source')} - {item.get('value_preview')}"
-        for item in javascript_secrets.get("top_detections", [])[:10]
-    ) or "No JavaScript secret exposure detected"
-    dom_xss_evidence = newline.join(
-        f"{item.get('vector')} - {item.get('tested_url')}"
-        for item in dom_xss.get("vectors", [])[:10]
-    ) or "No DOM-based XSS detected in the tested fragment flows"
-    open_redirect_evidence = newline.join(
-        f"{item.get('vector')} - {item.get('tested_url')} -> {item.get('redirect_target')}"
-        for item in open_redirect.get("vectors", [])[:10]
-    ) or "No open redirect detected in the tested flows"
-    reflected_xss_evidence = newline.join(
-        f"{item.get('vector')} - {item.get('tested_url')}"
-        for item in reflected_xss.get("vectors", [])[:10]
-    ) or "No reflected XSS detected in the tested parameters and forms"
-    stored_xss_evidence = newline.join(
-        f"{item.get('vector')} - {item.get('tested_url')}"
-        for item in stored_xss.get("vectors", [])[:10]
-    ) or "No stored XSS detected in the tested low-risk forms"
-    sqli_evidence = newline.join(
-        f"{item.get('vector')} - {item.get('tested_url')} - {item.get('evidence')}"
-        for item in sql_injection.get("vectors", [])[:10]
-    ) or "No SQL injection evidence detected in the tested low-risk flows"
-    sensitive_path_evidence = newline.join(
-        f"{item.get('path')} - HTTP {item.get('http_status')} - {item.get('severity')}"
-        for item in (sensitive_paths.get("exposed_paths", []) + sensitive_paths.get("blocked_paths", []))[:10]
-    ) or "No sensitive path evidence reported"
-    cors_evidence = newline.join(
-        f"{item.get('issue_type')}: {item.get('description')}"
-        for item in cors.get("issues", [])[:10]
-    ) or "No CORS issues reported"
-
-    header_card = _control_card(
-        "Security Headers",
-        headers.get("status", "Not available"),
-        "Missing browser protections can increase exposure to XSS impact, clickjacking, MIME sniffing, referrer leakage, and HTTPS downgrade risk.",
-        header_evidence,
-        "Medium",
-    )
-    cookie_card = _control_card(
-        "SSL And Cookies",
-        f"{ssl.get('status', 'Not available')} - {ssl.get('note', '')}",
-        cookies.get("status", "Not available"),
-        cookie_evidence,
-        "Low",
-    )
-    auth_surface_card = _control_card(
-        "Authentication Coverage",
-        auth_surface.get("status", "Not available"),
-        auth_surface.get(
-            "note",
-            "Authentication surface classification was not available.",
-        ),
-        auth_surface_evidence,
-        "Medium" if auth_surface.get("auth_detected") else "Low",
-    )
-    js_secret_card = _control_card(
-        "JavaScript Secret Exposure",
-        javascript_secrets.get("status", "Not available"),
-        f"{javascript_secrets.get('scanned_files', 0)} JavaScript file(s) and {javascript_secrets.get('scanned_inline_pages', 0)} inline-script page(s) reviewed.",
-        js_secret_evidence,
-        "High" if javascript_secrets.get("count", 0) else "Low",
-    )
-    dom_xss_card = _control_card(
-        "DOM-Based XSS Validation",
-        dom_xss.get("status", "Not available"),
-        "DOM-based XSS happens in browser-side code and can execute without server-side reflection.",
-        dom_xss_evidence,
-        "High" if dom_xss.get("count", 0) else "Low",
-    )
-    open_redirect_card = _control_card(
-        "Open Redirect Validation",
-        open_redirect.get("status", "Not available"),
-        "Redirect abuse can turn a trusted domain into a phishing or token-forwarding step in an attack chain.",
-        open_redirect_evidence,
-        "High" if open_redirect.get("count", 0) else "Low",
-    )
-    reflected_xss_card = _control_card(
-        "Reflected XSS Validation",
-        reflected_xss.get("status", "Not available"),
-        "Unsanitized reflection can enable browser-side script execution, phishing overlays, and session compromise.",
-        reflected_xss_evidence,
-        "High" if reflected_xss.get("count", 0) else "Low",
-    )
-    stored_xss_card = _control_card(
-        "Stored XSS Validation",
-        stored_xss.get("status", "Not available"),
-        "Stored XSS can affect every user who later views the injected record or page.",
-        stored_xss_evidence,
-        "High" if stored_xss.get("count", 0) else "Low",
-    )
-    sqli_card = _control_card(
-        "SQL Injection Validation",
-        sql_injection.get("status", "Not available"),
-        "SQL injection can expose database content, modify records, or support authentication bypass and wider compromise.",
-        sqli_evidence,
-        "High" if sql_injection.get("count", 0) else "Low",
-    )
-    sensitive_paths_card = _control_card(
-        "Sensitive Paths",
-        sensitive_paths.get("status", "Not available"),
-        f"{len(sensitive_paths.get('exposed_paths', []))} readable path(s), {len(sensitive_paths.get('blocked_paths', []))} blocked/detected path(s). HTTP 403 means blocked, not confirmed exposure.",
-        sensitive_path_evidence,
-        "Medium" if sensitive_paths.get("exposed_paths") else "Low",
-    )
-    cors_card = _control_card(
-        "CORS",
-        cors.get("status", "Not available"),
-        cors.get("engineer_summary", "No CORS summary available."),
-        cors_evidence,
-        "High" if "High" in cors.get("status", "") else "Medium" if "Medium" in cors.get("status", "") else "Low",
+    assessment_cards = _build_assessment_cards(
+        report,
+        headers=headers,
+        ssl=ssl,
+        cookies=cookies,
+        http_methods=http_methods,
+        server_header=server_header,
+        verbose_errors=verbose_errors,
+        technology=technology,
+        graphql=graphql,
+        source_maps=source_maps,
+        directory_listing=directory_listing,
+        forced_browsing=forced_browsing,
+        auth_surface=auth_surface,
+        csrf=csrf,
+        api_rate_limiting=api_rate_limiting,
+        javascript_secrets=javascript_secrets,
+        dom_xss=dom_xss,
+        open_redirect=open_redirect,
+        reflected_xss=reflected_xss,
+        stored_xss=stored_xss,
+        sql_injection=sql_injection,
+        sensitive_paths=sensitive_paths,
+        cors=cors,
     )
 
     return f"""<!doctype html>
@@ -334,6 +231,27 @@ def _build_report_html(report: dict) -> str:
     .finding-meta {{
       margin: 8px 0;
     }}
+    .assessment-head {{
+      display: table;
+      width: 100%;
+      margin-bottom: 6px;
+    }}
+    .assessment-head > div {{
+      display: table-cell;
+      vertical-align: top;
+    }}
+    .assessment-number {{
+      width: 34px;
+      height: 34px;
+      text-align: center;
+      border-radius: 999px;
+      background: #f2f4f7;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 34px;
+      margin-right: 12px;
+    }}
     .pill {{
       display: inline-block;
       margin-right: 6px;
@@ -432,13 +350,9 @@ def _build_report_html(report: dict) -> str:
         <div class="metric"><strong>{scope.get("forms_discovered", 0)}</strong><span>Forms found</span></div>
         <div class="metric"><strong>{scope.get("input_fields_found", 0)}</strong><span>Inputs found</span></div>
         <div class="metric"><strong>{scope.get("network_requests_captured", 0)}</strong><span>Network requests</span></div>
-        <div class="metric"><strong>{counts.get("Critical", 0) + counts.get("High", 0) + counts.get("Medium", 0)}</strong><span>Medium+ findings</span></div>
+        <div class="metric"><strong>{checks.get("implemented_public_checks", 0)}</strong><span>Checks performed</span></div>
+        <div class="metric"><strong>{checks.get("findings_detected", counts.get("Critical", 0) + counts.get("High", 0) + counts.get("Medium", 0) + counts.get("Low", 0))}</strong><span>Findings detected</span></div>
       </div>
-    </section>
-
-    <section class="section">
-      <h2>Top Security Priorities</h2>
-      <div class="list">{top_risk_cards}</div>
     </section>
 
     <section class="section">
@@ -461,30 +375,8 @@ Third-party services: {surface_network.get("third_party_service", 0)}</div>
     </section>
 
     <section class="section">
-      <h2>Security Control Analysis</h2>
-      <div class="list">
-        {header_card}
-        {cookie_card}
-        {auth_surface_card}
-        {js_secret_card}
-        {dom_xss_card}
-        {open_redirect_card}
-        {reflected_xss_card}
-        {stored_xss_card}
-        {sqli_card}
-        {sensitive_paths_card}
-        {cors_card}
-      </div>
-    </section>
-
-    <section class="section">
-      <h2>Detailed Findings</h2>
-      <div class="list">{detailed_cards}</div>
-    </section>
-
-    <section class="section">
-      <h2>Recommended Next Steps</h2>
-      <ul>{action_items}</ul>
+      <h2>Findings</h2>
+      <div class="list">{assessment_cards}</div>
     </section>
 
     <section class="section">
@@ -517,33 +409,159 @@ Third-party services: {surface_network.get("third_party_service", 0)}</div>
 </html>"""
 
 
-def _finding_card_html(item: dict, compact: bool) -> str:
-    severity = str(item.get("severity", "Info"))
-    priority = escape(str(item.get("priority", "Review")))
-    confidence = escape(str(item.get("confidence", "Medium")))
+def _build_assessment_cards(report: dict, **analysis: dict) -> str:
+    items = report.get("assessment_items", []) or _build_assessment_items(report, analysis)
+    if not items:
+        return "<div class='card'><h4>No actionable findings</h4><p>The scan did not identify actionable findings in the tested scope.</p></div>"
+    return "".join(_assessment_card_html(item, index + 1) for index, item in enumerate(items))
+
+
+def _build_assessment_items(report: dict, analysis: dict) -> list[dict]:
+    headers = analysis.get("headers", {})
+    ssl = analysis.get("ssl", {})
+    cookies = analysis.get("cookies", {})
+    http_methods = analysis.get("http_methods", {})
+    server_header = analysis.get("server_header", {})
+    verbose_errors = analysis.get("verbose_errors", {})
+    technology = analysis.get("technology", {})
+    graphql = analysis.get("graphql", {})
+    source_maps = analysis.get("source_maps", {})
+    directory_listing = analysis.get("directory_listing", {})
+    forced_browsing = analysis.get("forced_browsing", {})
+    auth_surface = analysis.get("auth_surface", {})
+    csrf = analysis.get("csrf", {})
+    api_rate_limiting = analysis.get("api_rate_limiting", {})
+    findings = report.get("findings", [])
+
+    items = []
+    missing_headers = headers.get("missing", [])
+    notable_cookies = cookies.get("notable_cookies", [])
+
+    if headers.get("status"):
+        items.append({
+            "title": "Security Headers",
+            "severity": "Medium" if missing_headers else "Low",
+            "status": headers.get("status", "Not available"),
+            "analysis": "Missing browser protections can increase exposure to XSS impact, clickjacking, MIME sniffing, referrer leakage, and HTTPS downgrade risk.",
+            "evidence": "\n".join(f"{item.get('header')}: {item.get('impact')}" for item in missing_headers) or "No missing required headers reported",
+            "fix": "Configure the missing headers at the web server, CDN, or application layer and keep them in the baseline going forward.",
+        })
+
+    if ssl.get("status") or cookies.get("status"):
+        items.append({
+            "title": "SSL And Cookies",
+            "severity": "Low" if notable_cookies else "Info",
+            "status": f"{ssl.get('status', 'Not available')} - {ssl.get('note', '')}".strip(" -"),
+            "analysis": cookies.get("status", "Cookie analysis not available."),
+            "evidence": "\n".join(
+                f"{item.get('name')} [{item.get('category')}]: {item.get('issue_summary')}"
+                for item in notable_cookies
+            ) or "No notable cookie issues reported",
+            "fix": "Renew the certificate before expiry if needed, and harden real session cookies with Secure, HttpOnly, and SameSite after separating them from marketing cookies.",
+        })
+
+    if http_methods.get("status") or verbose_errors.get("status") or server_header.get("status"):
+        items.append({
+            "title": "HTTP Methods And Server Behavior",
+            "severity": "Medium" if http_methods.get("trace_enabled") or http_methods.get("dangerous_methods") or verbose_errors.get("count", 0) else "Low",
+            "status": http_methods.get("status", "Server behavior reviewed"),
+            "analysis": f"{verbose_errors.get('status', 'Verbose error review not available.')} {server_header.get('status', '')}".strip(),
+            "evidence": "\n".join([
+                f"Allowed methods: {', '.join(http_methods.get('allow_methods', [])) or 'Not observed'}",
+                f"TRACE enabled: {'Yes' if http_methods.get('trace_enabled') else 'No'}",
+                f"Verbose error evidence: {verbose_errors.get('count', 0)}",
+                "Server disclosure headers: " + (" | ".join(f"{item.get('header')}: {item.get('value')}" for item in server_header.get("headers", [])) or "Not observed"),
+            ]),
+            "fix": "Restrict unnecessary HTTP methods, disable TRACE, remove avoidable server banners, and return generic production-safe error responses.",
+        })
+
+    if (graphql.get("count", 0) or source_maps.get("count", 0) or directory_listing.get("count", 0) or forced_browsing.get("count", 0) or technology.get("status")):
+        items.append({
+            "title": "Exposure And Discovery Checks",
+            "severity": "Medium" if (graphql.get("count", 0) or source_maps.get("count", 0) or directory_listing.get("count", 0) or forced_browsing.get("count", 0)) else "Low",
+            "status": technology.get("status", "Discovery checks completed"),
+            "analysis": graphql.get("status", "GraphQL exposure not observed."),
+            "evidence": "\n".join([
+                f"Source maps: {source_maps.get('status', 'Not available')}",
+                f"Directory listing: {directory_listing.get('status', 'Not available')}",
+                f"Forced browsing: {forced_browsing.get('status', 'Not available')}",
+            ]),
+            "fix": "Remove public debugging artifacts, review directly reachable internal-style paths, and expose only the routes and metadata that are intentionally public.",
+        })
+
+    if auth_surface.get("auth_detected"):
+        items.append({
+            "title": "Authentication Coverage",
+            "severity": "Medium",
+            "status": auth_surface.get("status", "Authentication surface detected"),
+            "analysis": "If login, signup, or password reset functionality exists, a public-only scan cannot be treated as full application assurance.",
+            "evidence": "\n".join([
+                f"Classification: {auth_surface.get('classification', 'unknown')}",
+                f"Assessment note: {auth_surface.get('note', 'Not available')}",
+                "Signals: " + (" | ".join(f"{item.get('type')}: {item.get('value')}" for item in auth_surface.get("signals", [])) or "No auth-related signals detected"),
+            ]),
+            "fix": "Run an authenticated scan or manual review before treating the application as fully assessed.",
+        })
+
+    if csrf.get("count", 0) or "No throttling" in str(api_rate_limiting.get("status", "")):
+        items.append({
+            "title": "Application Defense Checks",
+            "severity": "Medium",
+            "status": csrf.get("status", "Application defense checks completed"),
+            "analysis": api_rate_limiting.get("status", "API rate-limiting check not available."),
+            "evidence": "\n".join([
+                f"POST forms without token signals: {csrf.get('count', 0)}",
+                f"Rate-limit probe statuses: {', '.join(str(x) for x in api_rate_limiting.get('statuses', [])) or 'Not tested'}",
+            ]),
+            "fix": "Add anti-CSRF protections on state-changing forms and apply throttling or abuse controls to exposed API endpoints.",
+        })
+
+    covered = {
+        "Missing Security Headers", "Weak Cookie Flags", "SSL Certificate Issue", "SSL Certificate Expiring Soon",
+        "Weak TLS Protocol Supported", "Weak Cipher Suites Accepted", "HTTP Methods Enabled", "HTTP TRACE Enabled",
+        "Verbose Error Messages", "Server Header Disclosure", "GraphQL Introspection", "JavaScript Source Maps",
+        "Directory Listing Enabled", "Forced Browsing", "CSRF", "API Rate Limiting Absent", "JavaScript Secrets Exposed",
+        "DOM-Based XSS", "Open Redirect", "Reflected XSS", "Stored XSS", "SQL Injection", "Sensitive Path Detected",
+    }
+    for finding in findings:
+        raw = finding.get("raw", {})
+        if raw.get("vulnerability") in covered:
+            continue
+        items.append({
+            "title": finding.get("title", "Security finding"),
+            "severity": finding.get("severity", "Info"),
+            "priority": finding.get("priority", "Review"),
+            "confidence": finding.get("confidence", "Medium"),
+            "status": finding.get("title", "Finding detected"),
+            "analysis": finding.get("impact", "Review this finding in application context."),
+            "evidence": finding.get("evidence_summary", "Evidence not available"),
+            "fix": finding.get("remediation", "Validate and remediate according to security standards."),
+        })
+    return items
+
+
+def _assessment_card_html(item: dict, number: int) -> str:
+    severity = escape(str(item.get("severity", "Info")))
     title = escape(str(item.get("title", "Security finding")))
-    impact = escape(str(item.get("impact", "Review this finding in application context.")))
-    evidence = escape(str(item.get("evidence_summary", "Evidence not available")))
-    remediation = escape(str(item.get("remediation", "Validate and remediate according to security standards.")))
-    classes = f"pill sev-{severity.lower()}"
-    extra = "" if compact else f"<p><strong>Evidence:</strong></p><div class='evidence'>{evidence}</div><p><strong>Actionable fix:</strong> {remediation}</p>"
+    status = escape(str(item.get("status", "Review required")))
+    analysis = escape(str(item.get("analysis", "Review this issue in application context.")))
+    evidence = escape(str(item.get("evidence", "Evidence not available")))
+    fix = escape(str(item.get("fix", "Validate and remediate according to security standards.")))
+    priority = str(item.get("priority", "")).strip()
+    confidence = str(item.get("confidence", "")).strip()
+    meta = [f"<span class='pill sev-{severity.lower()}'>{severity}</span>"]
+    if priority:
+        meta.append(f"<span class='pill'>{escape(priority)}</span>")
+    if confidence:
+        meta.append(f"<span class='pill'>Confidence: {escape(confidence)}</span>")
     return (
         f"<div class='card'>"
-        f"<h4>{title}</h4>"
-        f"<div class='finding-meta'><span class='{classes}'>{escape(severity)}</span><span class='pill'>{priority}</span>"
-        + ("" if compact else f"<span class='pill'>Confidence: {confidence}</span>")
-        + f"</div><p><strong>Impact:</strong> {impact}</p>{extra}</div>"
-    )
-
-
-def _control_card(title: str, status: str, impact: str, evidence: str, severity: str) -> str:
-    return (
-        f"<div class='card'>"
-        f"<h4>{escape(title)}</h4>"
-        f"<div class='finding-meta'><span class='pill sev-{escape(severity.lower())}'>{escape(severity)}</span></div>"
-        f"<p><strong>Status:</strong> {escape(status)}</p>"
-        f"<p><strong>Analysis:</strong> {escape(impact)}</p>"
-        f"<div class='evidence'>{escape(evidence)}</div>"
+        f"<div class='assessment-head'><div class='assessment-number'>{number}</div><div>"
+        f"<h4>{title}</h4><div class='finding-meta'>{''.join(meta)}</div></div></div>"
+        f"<p><strong>Status:</strong> {status}</p>"
+        f"<p><strong>Analysis:</strong> {analysis}</p>"
+        f"<p><strong>Evidence:</strong></p><div class='evidence'>{evidence}</div>"
+        f"<p><strong>Actionable fix:</strong> {fix}</p>"
         f"</div>"
     )
 
