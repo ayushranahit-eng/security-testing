@@ -113,7 +113,12 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
         "sensitive_paths": sensitive_analysis,
         "cors": _analyze_cors_for_readable_report(data.get("cors_analysis", {})),
     }
-    assessment_items = _build_assessment_items_readable(security_analysis, finding_analysis["findings"])
+    baseline_reference = data.get("baseline_reference", {})
+    assessment_items = _build_assessment_items_readable(
+        security_analysis,
+        finding_analysis["findings"],
+        baseline_available=bool(baseline_reference.get("available")),
+    )
 
     return {
         "scan_metadata": {
@@ -122,6 +127,7 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
             "scan_completed_at": completed_at,
             "elapsed_seconds": elapsed_seconds,
             "status": "completed",
+            "baseline_reference": baseline_reference,
             "coverage": {
                 "scan_mode": "unauthenticated_public",
                 "auth_surface_detected": auth_surface_analysis["auth_detected"],
@@ -141,6 +147,7 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
             },
             "checks_performed": {
                 "implemented_public_checks": IMPLEMENTED_PUBLIC_CAPABILITY_COUNT,
+                "actionable_findings": len(finding_analysis["findings"]),
                 "findings_detected": len(finding_analysis["findings"]),
                 "checks_without_actionable_finding": max(
                     0,
@@ -1621,7 +1628,7 @@ def _generate_next_steps(findings: list, data: dict, api_analysis: dict, sensiti
     return {"priority_order": steps}
 
 
-def _build_assessment_items_readable(security_analysis: dict, findings: list) -> list[dict]:
+def _build_assessment_items_readable(security_analysis: dict, findings: list, baseline_available: bool) -> list[dict]:
     ordered_keys = [
         "headers",
         "ssl",
@@ -1667,7 +1674,7 @@ def _build_assessment_items_readable(security_analysis: dict, findings: list) ->
         item = security_analysis.get(key)
         if not isinstance(item, dict):
             continue
-        items.append(_assessment_item_from_analysis(key, item))
+        items.append(_assessment_item_from_analysis(key, item, baseline_available))
 
     covered_vulnerabilities = {
         "Missing Security Headers",
@@ -1731,6 +1738,7 @@ def _build_assessment_items_readable(security_analysis: dict, findings: list) ->
             "severity": finding.get("severity", "Info"),
             "priority": finding.get("priority", "P3"),
             "confidence": finding.get("confidence", "Medium"),
+            "finding_type": _finding_type_for_vulnerability(raw.get("vulnerability", ""), finding.get("severity", "Info")),
             "status": finding.get("title", "Finding detected"),
             "analysis": finding.get("impact", "Review this issue in application context."),
             "evidence": finding.get("evidence_summary", "Evidence not available"),
@@ -1740,7 +1748,7 @@ def _build_assessment_items_readable(security_analysis: dict, findings: list) ->
     return items
 
 
-def _assessment_item_from_analysis(key: str, item: dict) -> dict:
+def _assessment_item_from_analysis(key: str, item: dict, baseline_available: bool) -> dict:
     title_map = {
         "headers": "Security Headers",
         "ssl": "SSL Certificate",
@@ -1787,6 +1795,7 @@ def _assessment_item_from_analysis(key: str, item: dict) -> dict:
         "severity": severity,
         "priority": _priority_for_severity(severity),
         "confidence": "High" if item.get("status") not in {"Not run", "Not available"} else "Medium",
+        "finding_type": _assessment_finding_type(key, item, severity, baseline_available),
         "status": str(item.get("status", "Not available")),
         "analysis": _assessment_analysis_text(key, item),
         "evidence": _assessment_evidence_text(key, item),
@@ -1798,6 +1807,7 @@ def _assessment_severity(key: str, item: dict) -> str:
     status = str(item.get("status", "")).lower()
     note = str(item.get("note", "")).lower()
     combined = f"{status} {note}"
+    positive = _assessment_has_positive_signal(key, item)
 
     if key == "subdomain_takeover":
         return "High" if item.get("suspected_takeovers") else "Low"
@@ -1806,7 +1816,7 @@ def _assessment_severity(key: str, item: dict) -> str:
         issues = item.get("issues") or item.get("vectors") or []
         return "High" if count or issues else "Low"
     if key in {"headers", "header_regression", "http_methods", "graphql", "api_rate_limiting", "csrf", "source_maps", "directory_listing", "forced_browsing", "verbose_errors"}:
-        if any(token in combined for token in ["missing", "regressed", "enabled", "no throttling", "without token", "detected", "exposed"]):
+        if positive:
             return "Medium"
         return "Low"
     if key in {"javascript_secrets", "html_secrets"}:
@@ -1825,7 +1835,7 @@ def _assessment_severity(key: str, item: dict) -> str:
             return "Medium"
         return "Low"
     if key in {"dnssec", "domain_posture", "passive_host_intelligence", "domain_credential_leaks", "open_ports", "new_subdomain_alert", "asset_drift"}:
-        if any(token in combined for token in ["detected", "missing", "reachable", "observed", "matched"]):
+        if positive:
             return "Medium" if key in {"new_subdomain_alert", "asset_drift", "domain_credential_leaks"} else "Low"
         return "Low"
     return "Low"
@@ -1841,6 +1851,122 @@ def _priority_for_severity(severity: str) -> str:
     }.get(severity, "P3")
 
 
+def _assessment_finding_type(key: str, item: dict, severity: str, baseline_available: bool) -> str:
+    baseline_keys = {"new_subdomain_alert", "header_regression", "asset_drift"}
+    active_validation_keys = {
+        "path_traversal", "http_response_splitting", "dom_xss", "open_redirect",
+        "reflected_xss", "stored_xss", "sql_injection", "csrf", "api_rate_limiting",
+        "graphql", "cors", "subdomain_takeover",
+    }
+    scope_keys = {"auth_surface"}
+
+    if key in scope_keys:
+        return "Scope note"
+    if key in baseline_keys:
+        if not baseline_available:
+            return "Observation"
+        if _assessment_has_positive_signal(key, item):
+            return "Baseline alert"
+        return "Observation"
+    if key in active_validation_keys:
+        return "Needs manual validation" if _assessment_has_positive_signal(key, item) else "Observation"
+    if _assessment_has_positive_signal(key, item):
+        return "Confirmed finding"
+    return "Observation" if severity != "Info" else "Informational"
+
+
+def _assessment_has_positive_signal(key: str, item: dict) -> bool:
+    if key == "headers":
+        return bool(item.get("missing"))
+    if key == "ssl":
+        status = str(item.get("status", "")).lower()
+        note = str(item.get("note", "")).lower()
+        return "warning" in status or "critical" in status or "weak" in note or "invalid" in note
+    if key == "ssl_expiry_monitor":
+        return "threshold" in str(item.get("status", "")).lower()
+    if key == "cookies":
+        return bool(item.get("notable_cookies"))
+    if key == "certificate_transparency":
+        return False
+    if key == "new_subdomain_alert":
+        return bool(item.get("new_subdomains"))
+    if key == "subdomain_takeover":
+        return bool(item.get("suspected_takeovers"))
+    if key == "header_regression":
+        return bool(item.get("regressed_headers"))
+    if key == "asset_drift":
+        return any(item.get(field) for field in ("new_pages", "new_api_calls", "removed_pages", "removed_api_calls"))
+    if key == "passive_host_intelligence":
+        return bool(item.get("risky_ports") or item.get("risky_tags") or item.get("vulns"))
+    if key == "domain_credential_leaks":
+        return bool(item.get("breaches"))
+    if key == "auth_surface":
+        return bool(item.get("auth_detected"))
+    if key == "server_header_disclosure":
+        return bool(item.get("headers"))
+    if key == "http_methods":
+        return bool(item.get("trace_enabled") or item.get("dangerous_methods"))
+    if key == "javascript_secrets":
+        return bool(item.get("top_detections"))
+    if key == "html_secrets":
+        return bool(item.get("detections"))
+    if key == "technology":
+        return False
+    if key == "domain_posture":
+        return str(item.get("status", "")).lower() not in {"not run", "not available", "ok", "normal"}
+    if key == "dnssec":
+        return item.get("dnssec_enabled") is False
+    if key == "open_ports":
+        return any(port.get("port") not in (80, 443) for port in item.get("open_ports", []))
+    if key == "graphql":
+        return bool(item.get("count"))
+    if key == "api_versioning":
+        return bool(item.get("reachable_versions"))
+    if key == "api_rate_limiting":
+        return "no throttling" in str(item.get("status", "")).lower()
+    if key == "csrf":
+        return bool(item.get("count"))
+    if key == "source_maps":
+        return bool(item.get("count"))
+    if key in {"path_traversal", "http_response_splitting"}:
+        return bool(item.get("issues"))
+    if key == "directory_listing":
+        return bool(item.get("count"))
+    if key == "forced_browsing":
+        return bool(item.get("count"))
+    if key == "verbose_errors":
+        return bool(item.get("count"))
+    if key in {"dom_xss", "open_redirect", "reflected_xss", "stored_xss", "sql_injection"}:
+        return bool(item.get("count") or item.get("vectors"))
+    if key == "sensitive_paths":
+        return bool(item.get("exposed_paths") or item.get("blocked_paths"))
+    if key == "cors":
+        issues = item.get("issues", [])
+        return any(issue.get("severity") in {"Critical", "High", "Medium"} for issue in issues)
+    return False
+
+
+def _finding_type_for_vulnerability(vulnerability: str, severity: str) -> str:
+    active_validation = {
+        "SQL Injection", "Stored XSS", "Reflected XSS", "DOM-Based XSS",
+        "Open Redirect", "Path Traversal", "HTTP Response Splitting", "CSRF",
+        "API Rate Limiting Absent", "GraphQL Introspection", "CORS Misconfiguration",
+        "Subdomain Takeover",
+    }
+    baseline_alerts = {"Security Header Regression Alert", "New Subdomain Alert", "Exposed Asset Drift Detection"}
+    observations = {
+        "Technology Fingerprinting", "Domain Age & Parking Detection", "Certificate Transparency Monitoring",
+        "Shodan / Censys Passive Recon", "IP Reputation Check", "Shodan Exposure Score",
+    }
+    if vulnerability in baseline_alerts:
+        return "Baseline alert"
+    if vulnerability in active_validation:
+        return "Needs manual validation"
+    if vulnerability in observations:
+        return "Observation"
+    return "Confirmed finding" if severity not in {"Info", "Informational"} else "Observation"
+
+
 def _assessment_analysis_text(key: str, item: dict) -> str:
     fallback = str(item.get("note") or item.get("engineer_summary") or "Review this result in application context.")
     custom = {
@@ -1850,10 +1976,10 @@ def _assessment_analysis_text(key: str, item: dict) -> str:
         "ssl_expiry_monitor": "The scanner compared certificate lifetime against the configured renewal threshold.",
         "cookies": "Cookie findings should be separated into real session cookies versus analytics or marketing cookies before triage.",
         "certificate_transparency": "Certificate transparency records help inventory externally visible subdomains and unexpected certificate issuance.",
-        "new_subdomain_alert": "This compares the current certificate-transparency-backed subdomain set against the last saved baseline.",
+        "new_subdomain_alert": "This compares the current certificate-transparency-backed subdomain set against the last saved baseline. On a first scan, this is only a baseline setup observation.",
         "subdomain_takeover": "Dangling third-party service bindings can let attackers claim content on a trusted subdomain.",
-        "header_regression": "A previously present browser-security header disappearing can silently reopen exposure.",
-        "asset_drift": "Unexpected new pages or API calls can signal feature rollout, shadow endpoints, or accidental exposure.",
+        "header_regression": "A previously present browser-security header disappearing can silently reopen exposure. On a first scan, this is only waiting for baseline history.",
+        "asset_drift": "Unexpected new pages or API calls can signal feature rollout, shadow endpoints, or accidental exposure. On a first scan, this is only waiting for baseline history.",
         "passive_host_intelligence": "Passive exposure data is enrichment rather than proof, but it often highlights internet-facing services worth review.",
         "domain_credential_leaks": "Public breach records tied to the domain can raise credential reuse and account-takeover risk.",
         "server_header_disclosure": "Server, framework, or proxy banners can help attackers fingerprint the stack faster.",
@@ -1864,10 +1990,10 @@ def _assessment_analysis_text(key: str, item: dict) -> str:
         "domain_posture": "Very new or parked domains can deserve extra review before being treated as stable production assets.",
         "dnssec": "DNSSEC adds authenticity signals to DNS resolution for the public zone.",
         "open_ports": "Extra internet-facing ports can reveal administrative, development, or datastore services.",
-        "graphql": "Public GraphQL schema metadata can accelerate reconnaissance.",
+        "graphql": "Public GraphQL schema metadata can accelerate reconnaissance and should be validated in application context.",
         "api_versioning": "Reachable sibling API versions can drift from current security controls over time.",
-        "api_rate_limiting": "Weak or absent throttling can make scraping, brute force, or automated abuse easier.",
-        "csrf": "Browser-authenticated actions need request-forgery protections.",
+        "api_rate_limiting": "Weak or absent throttling can make scraping, brute force, or automated abuse easier, but the signal should be confirmed on production-relevant endpoints.",
+        "csrf": "Browser-authenticated actions need request-forgery protections. Public unauthenticated evidence is only a signal until the workflow is manually confirmed.",
         "source_maps": "Source maps can reveal original code, comments, and implementation detail.",
         "path_traversal": "File-style parameters are a common place for unsafe path joining and normalization mistakes.",
         "http_response_splitting": "CRLF injection can affect browsers, proxies, caches, and downstream security controls.",
@@ -1880,7 +2006,7 @@ def _assessment_analysis_text(key: str, item: dict) -> str:
         "stored_xss": "Persisted attacker-controlled content can impact every later viewer of the affected page.",
         "sql_injection": "Database error leakage or strong response anomalies can indicate unsafe query handling.",
         "sensitive_paths": "HTTP 403 means blocked, not confirmed exposure. Readable sensitive paths deserve faster action.",
-        "cors": "Missing CORS alone is usually safe for browsers, but unsafe allowlists or reflected origins are not.",
+        "cors": "Missing CORS alone is usually safe for browsers, but unsafe allowlists or reflected origins are not. Treat lower-severity CORS notes as policy observations unless risky browser-read behavior was confirmed.",
     }
     return custom.get(key, fallback)
 
@@ -1918,14 +2044,14 @@ def _assessment_evidence_text(key: str, item: dict) -> str:
             f"Subdomains discovered: {', '.join(item.get('subdomains', [])[:10]) or 'None'}",
         ])
     if key == "new_subdomain_alert":
-        return "\n".join(item.get("new_subdomains", [])) or "No new subdomains detected or no previous baseline available"
+        return "\n".join(item.get("new_subdomains", [])) or "No new subdomains detected. If this was the first scan, future scans will compare against the saved baseline."
     if key == "subdomain_takeover":
         return "\n".join(
             f"{entry.get('subdomain')} - {entry.get('provider')} - {entry.get('cname') or 'no cname'}"
             for entry in item.get("suspected_takeovers", [])
         ) or "No takeover fingerprint detected"
     if key == "header_regression":
-        return "\n".join(item.get("regressed_headers", [])) or "No regressed headers detected or no previous baseline available"
+        return "\n".join(item.get("regressed_headers", [])) or "No regressed headers detected. If this was the first scan, future scans will compare against the saved baseline."
     if key == "asset_drift":
         details = []
         for value in item.get("new_pages", [])[:5]:
@@ -1936,7 +2062,7 @@ def _assessment_evidence_text(key: str, item: dict) -> str:
             details.append(f"Removed page: {value}")
         for value in item.get("removed_api_calls", [])[:5]:
             details.append(f"Removed API call: {value}")
-        return "\n".join(details) or "No public attack-surface drift detected or no previous baseline available"
+        return "\n".join(details) or "No public attack-surface drift detected. If this was the first scan, future scans will compare against the saved baseline."
     if key == "passive_host_intelligence":
         return "\n".join([
             f"IP: {item.get('ip', 'Unknown')}",
@@ -2004,7 +2130,11 @@ def _assessment_evidence_text(key: str, item: dict) -> str:
             for entry in item.get("open_ports", [])
         ) or "No additional common open ports detected"
     if key == "graphql":
-        return f"GraphQL findings: {item.get('count', 0)}"
+        endpoints = ", ".join(item.get("exposed_endpoints", [])[:5]) or "None"
+        return "\n".join([
+            f"GraphQL findings: {item.get('count', 0)}",
+            f"Endpoints: {endpoints}",
+        ])
     if key == "api_versioning":
         return "\n".join(
             f"{entry.get('candidate_url')} - HTTP {entry.get('status')}"
@@ -2017,9 +2147,18 @@ def _assessment_evidence_text(key: str, item: dict) -> str:
             f"Throttled: {'Yes' if item.get('throttled') else 'No'}",
         ])
     if key == "csrf":
-        return f"POST forms without token signals: {item.get('count', 0)}"
+        sample_forms = item.get("forms", [])[:5]
+        sample_text = " | ".join(str(form.get("action") or form.get("url") or form) for form in sample_forms) or "None"
+        return "\n".join([
+            f"POST forms without token signals: {item.get('count', 0)}",
+            f"Sample forms: {sample_text}",
+        ])
     if key == "source_maps":
-        return f"Source map findings: {item.get('count', 0)}"
+        maps = ", ".join(str(value) for value in item.get("maps", [])[:5]) or "None"
+        return "\n".join([
+            f"Source map findings: {item.get('count', 0)}",
+            f"Examples: {maps}",
+        ])
     if key == "path_traversal":
         return "\n".join(
             f"{entry.get('parameter')} - {entry.get('tested_url')} - {entry.get('evidence')}"
@@ -2031,11 +2170,27 @@ def _assessment_evidence_text(key: str, item: dict) -> str:
             for entry in item.get("issues", [])
         ) or "No response splitting signal detected"
     if key == "directory_listing":
-        return f"Directory listing findings: {item.get('count', 0)}"
+        directories = ", ".join(str(value) for value in item.get("directories", [])[:5]) or "None"
+        return "\n".join([
+            f"Directory listing findings: {item.get('count', 0)}",
+            f"Examples: {directories}",
+        ])
     if key == "forced_browsing":
-        return f"Forced browsing findings: {item.get('count', 0)}"
+        hits = " | ".join(
+            f"{entry.get('path') or entry.get('url') or entry} (HTTP {entry.get('status') or entry.get('http_status') or '?'})"
+            if isinstance(entry, dict) else str(entry)
+            for entry in item.get("hits", [])[:5]
+        ) or "None"
+        return "\n".join([
+            f"Forced browsing findings: {item.get('count', 0)}",
+            f"Examples: {hits}",
+        ])
     if key == "verbose_errors":
-        return f"Verbose error evidence count: {item.get('count', 0)}"
+        evidence = " | ".join(str(value) for value in item.get("evidence", [])[:3]) or "None"
+        return "\n".join([
+            f"Verbose error evidence count: {item.get('count', 0)}",
+            f"Examples: {evidence}",
+        ])
     if key in {"dom_xss", "open_redirect", "reflected_xss", "stored_xss", "sql_injection"}:
         vectors = item.get("vectors", [])
         if key == "open_redirect":
@@ -2065,10 +2220,14 @@ def _assessment_evidence_text(key: str, item: dict) -> str:
             for entry in (exposed + blocked)[:10]
         ) or "No sensitive path evidence reported"
     if key == "cors":
-        return "\n".join(
+        issues = "\n".join(
             f"{entry.get('issue_type')}: {entry.get('description')}"
             for entry in item.get("issues", [])
         ) or "No CORS issues reported"
+        return "\n".join(filter(None, [
+            f"Tested URL: {item.get('tested_url')}" if item.get("tested_url") else "",
+            issues,
+        ]))
     return str(item.get("note") or item.get("engineer_summary") or "Evidence not available")
 
 

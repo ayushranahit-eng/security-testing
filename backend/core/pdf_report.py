@@ -351,7 +351,7 @@ def _build_report_html(report: dict) -> str:
         <div class="metric"><strong>{scope.get("input_fields_found", 0)}</strong><span>Inputs found</span></div>
         <div class="metric"><strong>{scope.get("network_requests_captured", 0)}</strong><span>Network requests</span></div>
         <div class="metric"><strong>{checks.get("implemented_public_checks", 0)}</strong><span>Checks performed</span></div>
-        <div class="metric"><strong>{checks.get("findings_detected", counts.get("Critical", 0) + counts.get("High", 0) + counts.get("Medium", 0) + counts.get("Low", 0))}</strong><span>Findings detected</span></div>
+        <div class="metric"><strong>{checks.get("actionable_findings", checks.get("findings_detected", counts.get("Critical", 0) + counts.get("High", 0) + counts.get("Medium", 0) + counts.get("Low", 0)))}</strong><span>Actionable findings</span></div>
       </div>
     </section>
 
@@ -375,7 +375,7 @@ Third-party services: {surface_network.get("third_party_service", 0)}</div>
     </section>
 
     <section class="section">
-      <h2>Findings</h2>
+      <h2>Checks Reviewed</h2>
       <div class="list">{assessment_cards}</div>
     </section>
 
@@ -547,9 +547,12 @@ def _assessment_card_html(item: dict, number: int) -> str:
     analysis = escape(str(item.get("analysis", "Review this issue in application context.")))
     evidence = escape(str(item.get("evidence", "Evidence not available")))
     fix = escape(str(item.get("fix", "Validate and remediate according to security standards.")))
+    finding_type = str(item.get("finding_type", "")).strip()
     priority = str(item.get("priority", "")).strip()
     confidence = str(item.get("confidence", "")).strip()
     meta = [f"<span class='pill sev-{severity.lower()}'>{severity}</span>"]
+    if finding_type:
+        meta.append(f"<span class='pill'>{escape(finding_type)}</span>")
     if priority:
         meta.append(f"<span class='pill'>{escape(priority)}</span>")
     if confidence:
