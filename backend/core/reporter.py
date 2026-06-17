@@ -27,7 +27,57 @@ TRACKING_COOKIE_PREFIXES = (
     "_ga", "_gid", "_gcl", "_fbp", "_gat", "test_cookie",
     "twk_", "tawk", "Tawk",
 )
-IMPLEMENTED_PUBLIC_CAPABILITY_COUNT = 47
+IMPLEMENTED_PUBLIC_CAPABILITY_COUNT = 48
+PUBLIC_CAPABILITY_LEDGER = [
+    "Missing CSP Header",
+    "Missing HSTS",
+    "Missing X-Frame-Options",
+    "Missing X-Content-Type-Options",
+    "Insecure Cookie Flags",
+    "Certificate Issues",
+    "Weak TLS Protocol Supported",
+    "Weak Cipher Suites Accepted",
+    "SSL Certificate Expiry Monitor",
+    "HTTP Methods Enabled",
+    "HTTP TRACE Enabled",
+    "Server Header Disclosure",
+    "Technology Fingerprinting",
+    "GraphQL Introspection",
+    "API Rate Limiting Absent",
+    "Credential Stuffing Signal",
+    "CSRF",
+    "Hardcoded Secrets in HTML",
+    "JavaScript Secrets Exposed",
+    "Open Redirect",
+    "DOM-Based XSS",
+    "Reflected XSS",
+    "Stored XSS",
+    "SQL Injection",
+    "Path Traversal",
+    "API Version Abuse",
+    "Open Port Scanning",
+    "Missing DNSSEC",
+    "HTTP Response Splitting",
+    "Domain Age & Parking Detection",
+    "Certificate Transparency Monitoring",
+    "New Subdomain Alert",
+    "Subdomain Takeover",
+    "Security Header Regression Alert",
+    "Exposed Asset Drift Detection",
+    "Shodan / Censys Passive Recon",
+    "IP Reputation Check",
+    "Domain Credential Leak Check",
+    "Shodan Exposure Score",
+    "JavaScript Source Maps",
+    "Directory Listing Enabled",
+    "Forced Browsing",
+    "Verbose Error Messages",
+    "CORS Misconfiguration",
+    ".env File Exposed",
+    ".git Directory Exposed",
+    "API Docs Exposed",
+    "Backup / Temp Files",
+]
 
 
 def generate_readable_json(data: dict, scan_time: str) -> dict:
@@ -53,13 +103,14 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
     technology_analysis = _analyze_technology(data.get("technology_fingerprint", {}))
     graphql_analysis = _analyze_graphql(data.get("graphql", {}))
     api_rate_limit_analysis = _analyze_rate_limits(data.get("api_rate_limiting", {}))
+    login_abuse_analysis = _analyze_login_abuse(data.get("login_abuse_protection", {}))
     csrf_analysis = _analyze_csrf(data.get("csrf", {}))
     source_map_analysis = _analyze_source_maps(data.get("source_maps", {}))
     directory_listing_analysis = _analyze_directory_listing(data.get("directory_listing", {}))
     forced_browsing_analysis = _analyze_forced_browsing(data.get("forced_browsing", {}))
     verbose_error_analysis = _analyze_verbose_errors(data.get("verbose_errors", {}))
     server_header_analysis = _passthrough_scan_result(data.get("server_header_disclosure", {}), "Not run")
-    html_secret_analysis = _passthrough_scan_result(data.get("html_secrets", {}), "Not run")
+    html_secret_analysis = _analyze_html_secrets(data.get("html_secrets", {}))
     dnssec_analysis = _passthrough_scan_result(data.get("dnssec", {}), "Not run")
     open_port_analysis = _passthrough_scan_result(data.get("open_ports", {}), "Not run")
     api_version_analysis = _passthrough_scan_result(data.get("api_versioning", {}), "Not run")
@@ -98,6 +149,7 @@ def generate_readable_json(data: dict, scan_time: str) -> dict:
         "graphql": graphql_analysis,
         "api_versioning": api_version_analysis,
         "api_rate_limiting": api_rate_limit_analysis,
+        "login_abuse_protection": login_abuse_analysis,
         "csrf": csrf_analysis,
         "source_maps": source_map_analysis,
         "path_traversal": path_traversal_analysis,
@@ -209,6 +261,7 @@ def generate_text_report(data: dict, scan_time: str) -> str:
     technology_analysis = _analyze_technology(data.get("technology_fingerprint", {}))
     graphql_analysis = _analyze_graphql(data.get("graphql", {}))
     api_rate_limit_analysis = _analyze_rate_limits(data.get("api_rate_limiting", {}))
+    login_abuse_analysis = _analyze_login_abuse(data.get("login_abuse_protection", {}))
     csrf_analysis = _analyze_csrf(data.get("csrf", {}))
     source_map_analysis = _analyze_source_maps(data.get("source_maps", {}))
     directory_listing_analysis = _analyze_directory_listing(data.get("directory_listing", {}))
@@ -351,6 +404,7 @@ def generate_text_report(data: dict, scan_time: str) -> str:
         add(f"  - [{item['severity']}] {item['type']} in {item['source']}: {item['value_preview']}")
     add(f"GraphQL introspection  : {graphql_analysis['status']}")
     add(f"API rate limiting      : {api_rate_limit_analysis['status']}")
+    add(f"Login abuse protection : {login_abuse_analysis['status']}")
     add(f"CSRF risk              : {csrf_analysis['status']}")
     add(f"Source map exposure    : {source_map_analysis['status']}")
     add(f"Directory listing      : {directory_listing_analysis['status']}")
@@ -787,9 +841,25 @@ def _analyze_javascript_secrets(scan_result: dict) -> dict:
         "status": scan_result.get("status", "Not run"),
         "count": len(detections),
         "scanned_files": scan_result.get("scanned_javascript_files", 0),
+        "scanned_file_urls": scan_result.get("scanned_file_urls", []),
         "scanned_inline_pages": scan_result.get("scanned_inline_script_pages", 0),
+        "scanned_inline_page_urls": scan_result.get("scanned_inline_page_urls", []),
         "top_detections": detections,
         "note": scan_result.get("note", "JavaScript secret scanning was not available."),
+    }
+
+
+def _analyze_html_secrets(scan_result: dict) -> dict:
+    detections = scan_result.get("detections", [])
+    return {
+        "status": scan_result.get("status", "Not run"),
+        "count": len(detections),
+        "scanned_pages": scan_result.get("scanned_pages", 0),
+        "scanned_page_urls": scan_result.get("scanned_page_urls", []),
+        "rendered_scanned_pages": scan_result.get("rendered_scanned_pages", 0),
+        "rendered_scanned_page_urls": scan_result.get("rendered_scanned_page_urls", []),
+        "detections": detections,
+        "note": scan_result.get("note", "HTML secret scanning was not available."),
     }
 
 
@@ -843,6 +913,21 @@ def _analyze_rate_limits(result: dict) -> dict:
         "tested_endpoint": result.get("tested_endpoint"),
         "statuses": result.get("statuses", []),
         "throttled": bool(result.get("throttled")),
+    }
+
+
+def _analyze_login_abuse(result: dict) -> dict:
+    return {
+        "status": result.get("status", "Not run"),
+        "tested_pages": result.get("tested_pages", []),
+        "candidate_pages": result.get("candidate_pages", []),
+        "attempts_per_page": result.get("attempts_per_page", 0),
+        "captcha_observed": bool(result.get("captcha_observed")),
+        "lockout_observed": bool(result.get("lockout_observed")),
+        "throttled": bool(result.get("throttled")),
+        "protection_observed": bool(result.get("protection_observed")),
+        "count": len(result.get("tested_pages", [])),
+        "note": result.get("note", "The scanner only probes obvious public login forms with invalid credentials."),
     }
 
 
@@ -1471,6 +1556,18 @@ def _enrich_finding(finding: dict) -> dict:
             "raw": finding,
         }
 
+    if vuln == "Credential Stuffing Signal":
+        return {
+            "title": "Login abuse protection signal missing",
+            "severity": severity,
+            "priority": "P2",
+            "confidence": "Low",
+            "impact": "Repeated invalid login attempts without a challenge, cooldown, or block can make credential stuffing and password-guessing attacks easier.",
+            "evidence_summary": "; ".join(details),
+            "remediation": "Apply login throttling, temporary lockouts, CAPTCHA or challenge steps, and anomaly monitoring on public sign-in flows.",
+            "raw": finding,
+        }
+
     if vuln == "CSRF":
         return {
             "title": "Potential CSRF risk detected",
@@ -1600,6 +1697,8 @@ def _generate_next_steps(findings: list, data: dict, api_analysis: dict, sensiti
         steps.append("Review GraphQL production exposure and disable introspection where it is not intentionally required.")
     if any(f.get("vulnerability") == "API Rate Limiting Absent" for f in findings):
         steps.append("Apply throttling and abuse controls to exposed API endpoints, especially authentication and enumeration-sensitive routes.")
+    if any(f.get("vulnerability") == "Credential Stuffing Signal" for f in findings):
+        steps.append("Add sign-in abuse controls such as login throttling, temporary lockouts, CAPTCHA or step-up challenges, and alerting on repeated invalid authentication attempts.")
     if any(f.get("vulnerability") == "CSRF" for f in findings):
         steps.append("Review state-changing forms for anti-CSRF tokens and pair them with stricter SameSite and origin validation controls.")
     if any(f.get("vulnerability") == "JavaScript Source Maps" for f in findings):
@@ -1629,123 +1728,259 @@ def _generate_next_steps(findings: list, data: dict, api_analysis: dict, sensiti
 
 
 def _build_assessment_items_readable(security_analysis: dict, findings: list, baseline_available: bool) -> list[dict]:
-    ordered_keys = [
-        "headers",
-        "ssl",
-        "ssl_expiry_monitor",
-        "cookies",
-        "certificate_transparency",
-        "new_subdomain_alert",
-        "subdomain_takeover",
-        "header_regression",
-        "asset_drift",
-        "passive_host_intelligence",
-        "domain_credential_leaks",
-        "auth_surface",
-        "server_header_disclosure",
-        "http_methods",
-        "javascript_secrets",
-        "html_secrets",
-        "technology",
-        "domain_posture",
-        "dnssec",
-        "open_ports",
-        "graphql",
-        "api_versioning",
-        "api_rate_limiting",
-        "csrf",
-        "source_maps",
-        "path_traversal",
-        "http_response_splitting",
-        "directory_listing",
-        "forced_browsing",
-        "verbose_errors",
-        "dom_xss",
-        "open_redirect",
-        "reflected_xss",
-        "stored_xss",
-        "sql_injection",
-        "sensitive_paths",
-        "cors",
+    findings_by_vulnerability = {}
+    for finding in findings:
+        raw = finding.get("raw", {})
+        vulnerability = raw.get("vulnerability")
+        if vulnerability and vulnerability not in findings_by_vulnerability:
+            findings_by_vulnerability[vulnerability] = finding
+
+    return [
+        _build_capability_check_item(capability, security_analysis, findings_by_vulnerability, baseline_available)
+        for capability in PUBLIC_CAPABILITY_LEDGER
     ]
 
-    items = []
-    for key in ordered_keys:
-        item = security_analysis.get(key)
-        if not isinstance(item, dict):
-            continue
-        items.append(_assessment_item_from_analysis(key, item, baseline_available))
 
-    covered_vulnerabilities = {
-        "Missing Security Headers",
+def _build_capability_check_item(capability: str, security_analysis: dict, findings_by_vulnerability: dict, baseline_available: bool) -> dict:
+    for candidate in _capability_vulnerability_candidates(capability):
+        finding = findings_by_vulnerability.get(candidate)
+        if finding:
+            item = _finding_item_from_enriched_finding(finding)
+            item["title"] = capability
+            return item
+
+    if capability in {
         "Missing CSP Header",
         "Missing HSTS",
         "Missing X-Frame-Options",
-        "Missing X-Content-Type",
         "Missing X-Content-Type-Options",
-        "Insecure Cookie Flags",
-        "Weak Cookie Flags",
-        "Certificate Issues",
-        "SSL Certificate Issue",
-        "Weak TLS Protocol Supported",
-        "Weak Cipher Suites Accepted",
-        "SSL Certificate Expiry Monitor",
-        "Certificate Transparency Monitoring",
-        "New Subdomain Alert",
-        "DNS Subdomain Takeover",
-        "Subdomain Takeover",
-        "Security Header Regression Alert",
-        "Exposed Asset Drift Detection",
-        "Shodan / Censys Passive Recon",
-        "IP Reputation Check",
-        "Shodan Exposure Score",
-        "Domain Credential Leak Check",
-        "Server Header Disclosure",
-        "HTTP Methods Enabled",
-        "HTTP TRACE Enabled",
-        "Secrets in JavaScript Files",
-        "JavaScript Secrets Exposed",
-        "Hardcoded Secrets in HTML",
-        "Technology Fingerprinting",
-        "Domain Age & Parking Detection",
-        "Missing DNSSEC",
-        "Open Port Scanning",
-        "GraphQL Introspection",
-        "API Version Abuse",
-        "API Rate Limiting Absent",
-        "CSRF",
-        "JavaScript Source Maps",
-        "Path Traversal",
-        "HTTP Response Splitting",
-        "Directory Listing Enabled",
-        "Forced Browsing",
-        "Verbose Error Messages",
-        "DOM-Based XSS",
-        "Open Redirect",
-        "Reflected XSS",
-        "Stored XSS",
-        "SQL Injection",
-        "Sensitive Path Detected",
-        "CORS Misconfiguration",
+    }:
+        return _header_capability_item(capability, security_analysis.get("headers", {}))
+
+    if capability in {
+        ".env File Exposed",
+        ".git Directory Exposed",
+        "API Docs Exposed",
+        "Backup / Temp Files",
+    }:
+        return _sensitive_path_capability_item(capability, security_analysis.get("sensitive_paths", {}))
+
+    direct_analysis_map = {
+        "Insecure Cookie Flags": "cookies",
+        "Certificate Issues": "ssl",
+        "SSL Certificate Expiry Monitor": "ssl_expiry_monitor",
+        "HTTP Methods Enabled": "http_methods",
+        "HTTP TRACE Enabled": "http_methods",
+        "Server Header Disclosure": "server_header_disclosure",
+        "Technology Fingerprinting": "technology",
+        "GraphQL Introspection": "graphql",
+        "API Rate Limiting Absent": "api_rate_limiting",
+        "Credential Stuffing Signal": "login_abuse_protection",
+        "CSRF": "csrf",
+        "Hardcoded Secrets in HTML": "html_secrets",
+        "JavaScript Secrets Exposed": "javascript_secrets",
+        "Open Redirect": "open_redirect",
+        "DOM-Based XSS": "dom_xss",
+        "Reflected XSS": "reflected_xss",
+        "Stored XSS": "stored_xss",
+        "SQL Injection": "sql_injection",
+        "Path Traversal": "path_traversal",
+        "API Version Abuse": "api_versioning",
+        "Open Port Scanning": "open_ports",
+        "Missing DNSSEC": "dnssec",
+        "HTTP Response Splitting": "http_response_splitting",
+        "Domain Age & Parking Detection": "domain_posture",
+        "Certificate Transparency Monitoring": "certificate_transparency",
+        "New Subdomain Alert": "new_subdomain_alert",
+        "Subdomain Takeover": "subdomain_takeover",
+        "Security Header Regression Alert": "header_regression",
+        "Exposed Asset Drift Detection": "asset_drift",
+        "Shodan / Censys Passive Recon": "passive_host_intelligence",
+        "IP Reputation Check": "passive_host_intelligence",
+        "Domain Credential Leak Check": "domain_credential_leaks",
+        "Shodan Exposure Score": "passive_host_intelligence",
+        "JavaScript Source Maps": "source_maps",
+        "Directory Listing Enabled": "directory_listing",
+        "Forced Browsing": "forced_browsing",
+        "Verbose Error Messages": "verbose_errors",
+        "CORS Misconfiguration": "cors",
+    }
+    analysis_key = direct_analysis_map.get(capability)
+    if analysis_key:
+        item = _assessment_item_from_analysis(analysis_key, security_analysis.get(analysis_key, {}), baseline_available)
+        item["title"] = capability
+        item = _normalize_capability_item(item, capability)
+        return item
+
+    return _empty_capability_item(
+        capability,
+        analysis="This capability is implemented in the public scanner but had no target-specific evidence to report in this scan.",
+        evidence="No issue observed in this scan.",
+        fix="No action required unless future scans or manual review surface new evidence.",
+    )
+
+
+def _capability_vulnerability_candidates(capability: str) -> list[str]:
+    aliases = {
+        "Missing X-Content-Type-Options": ["Missing X-Content-Type-Options", "Missing X-Content-Type"],
+        "Insecure Cookie Flags": ["Insecure Cookie Flags", "Weak Cookie Flags"],
+        "Certificate Issues": ["Certificate Issues", "SSL Certificate Issue"],
+        "Subdomain Takeover": ["Subdomain Takeover", "DNS Subdomain Takeover"],
+        "JavaScript Secrets Exposed": ["JavaScript Secrets Exposed", "Secrets in JavaScript Files"],
+    }
+    return aliases.get(capability, [capability])
+
+
+def _finding_item_from_enriched_finding(finding: dict) -> dict:
+    raw = finding.get("raw", {})
+    return {
+        "title": finding.get("title", raw.get("vulnerability", "Security finding")),
+        "severity": finding.get("severity", "Info"),
+        "priority": finding.get("priority", "P3"),
+        "confidence": finding.get("confidence", "Medium"),
+        "finding_type": _finding_type_for_vulnerability(raw.get("vulnerability", ""), finding.get("severity", "Info")),
+        "status": finding.get("title", "Finding detected"),
+        "analysis": finding.get("impact", "Review this issue in application context."),
+        "evidence": finding.get("evidence_summary", "Evidence not available"),
+        "fix": finding.get("remediation", "Validate and remediate according to internal security standards."),
     }
 
-    for finding in findings:
-        raw = finding.get("raw", {})
-        if raw.get("vulnerability") in covered_vulnerabilities:
-            continue
-        items.append({
-            "title": finding.get("title", "Security finding"),
-            "severity": finding.get("severity", "Info"),
-            "priority": finding.get("priority", "P3"),
-            "confidence": finding.get("confidence", "Medium"),
-            "finding_type": _finding_type_for_vulnerability(raw.get("vulnerability", ""), finding.get("severity", "Info")),
-            "status": finding.get("title", "Finding detected"),
-            "analysis": finding.get("impact", "Review this issue in application context."),
-            "evidence": finding.get("evidence_summary", "Evidence not available"),
-            "fix": finding.get("remediation", "Validate and remediate according to internal security standards."),
-        })
 
-    return items
+def _header_capability_item(capability: str, headers: dict) -> dict:
+    target_header = {
+        "Missing CSP Header": "content-security-policy",
+        "Missing HSTS": "strict-transport-security",
+        "Missing X-Frame-Options": "x-frame-options",
+        "Missing X-Content-Type-Options": "x-content-type-options",
+    }[capability]
+    missing = headers.get("missing", [])
+    match = next((entry for entry in missing if str(entry.get("header", "")).lower() == target_header), None)
+    if match:
+        return {
+            "title": capability,
+            "severity": "Medium",
+            "priority": "P2",
+            "confidence": "High",
+            "finding_type": "Confirmed finding",
+            "status": "Header missing",
+            "analysis": match.get("impact") or "A browser-side security header expected by the scanner was not present.",
+            "evidence": f"{target_header}: missing from the response headers",
+            "fix": match.get("remediation") or "Configure the missing header at the application, CDN, or reverse-proxy layer.",
+        }
+    return _empty_capability_item(
+        capability,
+        analysis="This scan checked specifically for this browser-side security header.",
+        evidence=f"{target_header}: observed or not flagged as missing.",
+        fix="No action required unless header policy changes.",
+    )
+
+
+def _sensitive_path_capability_item(capability: str, sensitive_paths: dict) -> dict:
+    exposed = sensitive_paths.get("exposed_paths", [])
+    blocked = sensitive_paths.get("blocked_paths", [])
+    if capability == ".env File Exposed":
+        tokens = [".env"]
+    elif capability == ".git Directory Exposed":
+        tokens = [".git"]
+    elif capability == "API Docs Exposed":
+        tokens = ["swagger", "openapi", "redoc", "api-doc"]
+    else:
+        tokens = ["backup", ".bak", ".old", ".tmp", ".sql", "dump", "temp"]
+
+    matches = [
+        entry for entry in (exposed + blocked)
+        if any(token in str(entry.get("path", "")).lower() for token in tokens)
+    ]
+    readable = [entry for entry in matches if entry in exposed]
+    if readable:
+        sample = readable[0]
+        return {
+            "title": capability,
+            "severity": sample.get("severity", "Medium"),
+            "priority": "P2" if sample.get("severity") in {"High", "Critical", "Medium"} else "P4",
+            "confidence": "High",
+            "finding_type": "Confirmed finding",
+            "status": "Readable sensitive path exposed",
+            "analysis": _get_sensitive_path_note(sample.get("path", ""), blocked=False),
+            "evidence": "\n".join(
+                f"{entry.get('path')} - HTTP {entry.get('http_status')} - {entry.get('content_type', 'unknown')}"
+                for entry in readable[:5]
+            ),
+            "fix": "Remove or restrict public access to the exposed path and review whether sensitive content was leaked.",
+        }
+    if matches:
+        sample = matches[0]
+        return {
+            "title": capability,
+            "severity": "Low",
+            "priority": "P4",
+            "confidence": "Medium",
+            "finding_type": "Observation",
+            "status": "Path signal detected but access was blocked",
+            "analysis": _get_sensitive_path_note(sample.get("path", ""), blocked=True),
+            "evidence": "\n".join(
+                f"{entry.get('path')} - HTTP {entry.get('http_status')}"
+                for entry in matches[:5]
+            ),
+            "fix": "Review whether this path should exist publicly at all, even though the current response was blocked.",
+        }
+    return _empty_capability_item(
+        capability,
+        analysis="This capability probes for a specific class of sensitive public path exposure.",
+        evidence="No related path was exposed in this scan.",
+        fix="No action required unless future scans expose a matching path.",
+    )
+
+
+def _normalize_capability_item(item: dict, capability: str) -> dict:
+    if capability == "HTTP TRACE Enabled":
+        trace_enabled = "trace enabled: yes" in str(item.get("evidence", "")).lower()
+        if trace_enabled:
+            item["severity"] = "Medium"
+            item["priority"] = "P2"
+            item["finding_type"] = "Confirmed finding"
+            item["status"] = "TRACE method enabled"
+            item["analysis"] = "The server appeared to allow HTTP TRACE, which is usually unnecessary on a public origin."
+        else:
+            item = _empty_capability_item(
+                capability,
+                analysis="This scan checked whether the origin exposed the HTTP TRACE method.",
+                evidence="TRACE enabled: No",
+                fix="No action required unless server method policy changes.",
+            )
+    elif capability == "HTTP Methods Enabled":
+        dangerous = any(token in str(item.get("evidence", "")).lower() for token in ["put", "delete", "patch"])
+        if dangerous:
+            item["finding_type"] = "Observation"
+        elif item.get("severity") == "Low":
+            item = _empty_capability_item(
+                capability,
+                analysis="This scan reviewed whether unnecessary HTTP methods were exposed by the public origin.",
+                evidence=item.get("evidence", "No dangerous methods observed."),
+                fix="No action required unless the allowed method set expands.",
+            )
+    elif capability == "Certificate Transparency Monitoring":
+        item["finding_type"] = "Observation"
+        item["severity"] = "Info"
+        item["priority"] = "P4"
+        item["status"] = "Inventory check completed"
+    elif capability in {"Shodan / Censys Passive Recon", "IP Reputation Check", "Shodan Exposure Score", "Technology Fingerprinting", "Domain Age & Parking Detection"} and item.get("finding_type") == "Confirmed finding":
+        item["finding_type"] = "Observation"
+    return item
+
+
+def _empty_capability_item(capability: str, analysis: str, evidence: str, fix: str) -> dict:
+    return {
+        "title": capability,
+        "severity": "Info",
+        "priority": "P4",
+        "confidence": "High",
+        "finding_type": "Observation",
+        "status": "No issue observed in this scan",
+        "analysis": analysis,
+        "evidence": evidence,
+        "fix": fix,
+    }
 
 
 def _assessment_item_from_analysis(key: str, item: dict, baseline_available: bool) -> dict:
@@ -1773,6 +2008,7 @@ def _assessment_item_from_analysis(key: str, item: dict, baseline_available: boo
         "graphql": "GraphQL Introspection",
         "api_versioning": "API Version Exposure",
         "api_rate_limiting": "API Rate Limiting",
+        "login_abuse_protection": "Login Abuse Protection",
         "csrf": "CSRF",
         "source_maps": "Source Maps",
         "path_traversal": "Path Traversal",
@@ -1815,7 +2051,7 @@ def _assessment_severity(key: str, item: dict) -> str:
         count = item.get("count")
         issues = item.get("issues") or item.get("vectors") or []
         return "High" if count or issues else "Low"
-    if key in {"headers", "header_regression", "http_methods", "graphql", "api_rate_limiting", "csrf", "source_maps", "directory_listing", "forced_browsing", "verbose_errors"}:
+    if key in {"headers", "header_regression", "http_methods", "graphql", "api_rate_limiting", "login_abuse_protection", "csrf", "source_maps", "directory_listing", "forced_browsing", "verbose_errors"}:
         if positive:
             return "Medium"
         return "Low"
@@ -1856,6 +2092,7 @@ def _assessment_finding_type(key: str, item: dict, severity: str, baseline_avail
     active_validation_keys = {
         "path_traversal", "http_response_splitting", "dom_xss", "open_redirect",
         "reflected_xss", "stored_xss", "sql_injection", "csrf", "api_rate_limiting",
+        "login_abuse_protection",
         "graphql", "cors", "subdomain_takeover",
     }
     scope_keys = {"auth_surface"}
@@ -1924,6 +2161,9 @@ def _assessment_has_positive_signal(key: str, item: dict) -> bool:
         return bool(item.get("reachable_versions"))
     if key == "api_rate_limiting":
         return "no throttling" in str(item.get("status", "")).lower()
+    if key == "login_abuse_protection":
+        status = str(item.get("status", "")).lower()
+        return "no clear login abuse protection observed" in status
     if key == "csrf":
         return bool(item.get("count"))
     if key == "source_maps":
@@ -1950,6 +2190,7 @@ def _finding_type_for_vulnerability(vulnerability: str, severity: str) -> str:
     active_validation = {
         "SQL Injection", "Stored XSS", "Reflected XSS", "DOM-Based XSS",
         "Open Redirect", "Path Traversal", "HTTP Response Splitting", "CSRF",
+        "Credential Stuffing Signal",
         "API Rate Limiting Absent", "GraphQL Introspection", "CORS Misconfiguration",
         "Subdomain Takeover",
     }
@@ -1993,6 +2234,7 @@ def _assessment_analysis_text(key: str, item: dict) -> str:
         "graphql": "Public GraphQL schema metadata can accelerate reconnaissance and should be validated in application context.",
         "api_versioning": "Reachable sibling API versions can drift from current security controls over time.",
         "api_rate_limiting": "Weak or absent throttling can make scraping, brute force, or automated abuse easier, but the signal should be confirmed on production-relevant endpoints.",
+        "login_abuse_protection": "A small invalid-login burst can reveal whether public sign-in flows present throttling, lockouts, cooldowns, or CAPTCHA-style friction after repeated failures.",
         "csrf": "Browser-authenticated actions need request-forgery protections. Public unauthenticated evidence is only a signal until the workflow is manually confirmed.",
         "source_maps": "Source maps can reveal original code, comments, and implementation detail.",
         "path_traversal": "File-style parameters are a common place for unsafe path joining and normalization mistakes.",
@@ -2097,15 +2339,44 @@ def _assessment_evidence_text(key: str, item: dict) -> str:
             f"TRACE enabled: {'Yes' if item.get('trace_enabled') else 'No'}",
         ])
     if key == "javascript_secrets":
-        return "\n".join(
+        scanned_inline_pages = item.get("scanned_inline_pages", 0)
+        inline_urls = item.get("scanned_inline_page_urls", [])
+        coverage_note = ""
+        if scanned_inline_pages and inline_urls:
+            coverage_note = f"Coverage: scanned inline scripts on {scanned_inline_pages} crawled page(s)."
+        detections = "\n".join(
             f"{entry.get('type')} - {entry.get('source')} - {entry.get('value_preview')}"
             for entry in item.get("top_detections", [])
         ) or "No JavaScript secret exposure detected"
+        return "\n".join(filter(None, [
+            coverage_note,
+            f"Scanned JS files: {item.get('scanned_files', 0)}",
+            f"JS file URLs: {', '.join(item.get('scanned_file_urls', [])[:5])}" if item.get("scanned_file_urls") else "",
+            f"Scanned inline-script pages: {item.get('scanned_inline_pages', 0)}",
+            f"Inline page URLs: {', '.join(item.get('scanned_inline_page_urls', [])[:5])}" if item.get("scanned_inline_page_urls") else "",
+            detections,
+        ]))
     if key == "html_secrets":
-        return "\n".join(
+        scanned_raw_pages = item.get("scanned_pages", 0)
+        scanned_rendered_pages = item.get("rendered_scanned_pages", 0)
+        coverage_note = ""
+        if scanned_raw_pages or scanned_rendered_pages:
+            coverage_note = (
+                f"Coverage: scanned raw HTML on {scanned_raw_pages} page(s) "
+                f"and rendered DOM on {scanned_rendered_pages} page(s)."
+            )
+        detections = "\n".join(
             f"{entry.get('type')} - {entry.get('source')} - {entry.get('value_preview')}"
             for entry in item.get("detections", [])
         ) or "No HTML secret exposure detected"
+        return "\n".join(filter(None, [
+            coverage_note,
+            f"Scanned raw HTML pages: {item.get('scanned_pages', 0)}",
+            f"Raw HTML page URLs: {', '.join(item.get('scanned_page_urls', [])[:5])}" if item.get("scanned_page_urls") else "",
+            f"Scanned rendered DOM pages: {item.get('rendered_scanned_pages', 0)}",
+            f"Rendered DOM page URLs: {', '.join(item.get('rendered_scanned_page_urls', [])[:5])}" if item.get("rendered_scanned_page_urls") else "",
+            detections,
+        ]))
     if key == "technology":
         return "\n".join([
             f"Frameworks: {', '.join(item.get('frameworks', [])) or 'None observed'}",
@@ -2146,6 +2417,20 @@ def _assessment_evidence_text(key: str, item: dict) -> str:
             f"Probe statuses: {', '.join(str(status) for status in item.get('statuses', [])) or 'Not tested'}",
             f"Throttled: {'Yes' if item.get('throttled') else 'No'}",
         ])
+    if key == "login_abuse_protection":
+        tested_pages = item.get("tested_pages", [])
+        lines = [
+            f"Candidate login pages: {len(item.get('candidate_pages', []))}",
+            f"Tested login pages: {len(tested_pages)}",
+            f"Attempts per page: {item.get('attempts_per_page', 0)}",
+            f"Protection observed: {'Yes' if item.get('protection_observed') else 'No'}",
+        ]
+        for entry in tested_pages[:3]:
+            indicators = ", ".join(entry.get("indicators", [])) or (entry.get("last_observation") or "No obvious challenge or lockout signal observed")
+            lines.append(
+                f"{entry.get('url')} - attempts {entry.get('attempts_sent', 0)} - {indicators}"
+            )
+        return "\n".join(lines)
     if key == "csrf":
         sample_forms = item.get("forms", [])[:5]
         sample_text = " | ".join(str(form.get("action") or form.get("url") or form) for form in sample_forms) or "None"
@@ -2256,6 +2541,7 @@ def _assessment_fix_text(key: str) -> str:
         "graphql": "Disable GraphQL introspection in production where possible or restrict it to trusted users and environments.",
         "api_versioning": "Inventory every reachable API version, retire obsolete versions, and confirm security controls are consistent across them.",
         "api_rate_limiting": "Apply rate limits, anomaly detection, and challenge controls on sensitive or high-value API endpoints.",
+        "login_abuse_protection": "Add sign-in throttling, temporary lockouts, CAPTCHA or step-up challenges, and monitoring for repeated invalid login attempts.",
         "csrf": "Use anti-CSRF tokens, validate Origin or Referer where appropriate, and pair them with stricter SameSite cookie protections.",
         "source_maps": "Remove public source maps in production or restrict them to trusted users and debugging environments.",
         "path_traversal": "Never use raw user input in filesystem paths, apply strict allowlists, normalize paths safely, and enforce a fixed boundary.",

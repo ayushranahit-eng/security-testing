@@ -17,6 +17,7 @@ This document summarizes what the scanner can currently detect, why each capabil
 | Technology fingerprinting | Identifies likely frameworks, CMS markers, server technologies, and API styles. | Helps defenders understand exposed stack components and prioritize patch review. | Informational to Medium |
 | GraphQL introspection checks | Tests whether GraphQL schema metadata is exposed publicly. | Helps detect schema disclosure that speeds up attacker reconnaissance. | Low to Medium |
 | API rate-limit checks | Sends a small burst of requests to exposed API-like endpoints. | Helps detect missing throttling that can support brute force and scraping. | Low to Medium |
+| Login abuse protection checks | Sends a small burst of invalid login attempts to obvious public sign-in forms and watches for CAPTCHA, lockout, cooldown, or throttling signals. | Helps detect weak resistance to credential stuffing and repeated password-guessing on public login pages. | Medium |
 | CSRF risk detection | Reviews state-changing forms for likely anti-CSRF token presence. | Helps detect weak request-forgery protections in browser workflows. | Medium |
 | Server header disclosure checks | Reviews response headers for server, runtime, proxy, and framework banners. | Helps detect technology disclosure that speeds up attacker stack profiling. | Low |
 | HTML secret scanning | Detects exposed keys, tokens, and credentials rendered directly into HTML. | Helps prevent credential leakage through templates, meta tags, inline JSON, and page source. | High to Critical |
@@ -184,6 +185,23 @@ Importance: Public APIs should resist brute force, scraping, and simple automati
 Impact: Missing throttling can support account attacks or high-volume abuse.
 
 Risk: Low to Medium.
+
+### Login Abuse Protection Checks
+
+If a clear public login form is discovered, the scanner sends a small burst of
+invalid login attempts and looks for:
+
+- CAPTCHA prompts or challenge widgets
+- temporary lockout or retry-later messaging
+- throttle signals such as HTTP 429
+
+Importance: Public sign-in flows should resist simple brute-force and
+credential-stuffing behavior.
+
+Impact: If repeated invalid attempts do not trigger friction or blocking, login
+endpoints may be easier to automate against at scale.
+
+Risk: Medium.
 
 ### CSRF Risk Detection
 

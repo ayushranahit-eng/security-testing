@@ -65,6 +65,10 @@ DEFAULT_CONFIG = {
     "graphql_common_paths": ["/graphql", "/api/graphql", "/query", "/graphiql"],
     "rate_limit_probe_requests": 4,
     "rate_limit_probe_delay_ms": 150,
+    "login_probe_attempts": 6,
+    "login_probe_max_pages": 2,
+    "login_probe_username": "scanner-probe@example.com",
+    "login_probe_password": "NotTheRightPassword123!",
     "path_traversal_parameter_names": [
         "file", "path", "page", "dir", "directory", "folder",
         "template", "document", "doc", "download", "image",

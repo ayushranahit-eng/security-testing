@@ -35,6 +35,7 @@ The scanner is currently strong in these areas:
 - initial DOM-based XSS validation
 - initial stored XSS validation
 - initial SQL injection heuristics
+- initial login abuse resistance signals on public login forms
 - structured engineer-readable reporting
 
 These areas provide real value for:
@@ -71,6 +72,7 @@ These checks are useful and meaningful, but may still need confirmation:
 - DOM-based XSS validation
 - stored XSS validation
 - SQL injection signals based on errors or anomalies
+- login abuse protection signals on public login forms
 
 These can reveal real vulnerabilities, but:
 
@@ -94,6 +96,7 @@ These are areas the scanner does not yet fully cover:
 - file upload abuse validation
 - technology fingerprinting and CVE correlation
 - rate-limiting and abuse-resistance testing
+- deep or distributed login abuse resistance testing
 
 ## What Users Can Trust
 

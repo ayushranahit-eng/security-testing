@@ -69,7 +69,7 @@ GENERIC_ASSIGNMENT_RE = re.compile(
 def scan_javascript_secrets(target_url: str, pages: list, network_calls: list, findings: list, cfg: dict) -> dict:
     target_host = urlparse(target_url).netloc.lower()
     max_js_files = int(cfg.get("max_javascript_files", 25))
-    max_inline_pages = int(cfg.get("max_inline_script_pages", 10))
+    max_inline_pages = int(cfg.get("max_pages", cfg.get("max_inline_script_pages", 20)))
     max_bytes = int(cfg.get("max_download_bytes_per_file", 500_000))
 
     external_sources = _collect_candidate_js_urls(target_url, network_calls)
@@ -120,7 +120,9 @@ def scan_javascript_secrets(target_url: str, pages: list, network_calls: list, f
     return {
         "status": "Secrets detected" if detections else "No secrets detected",
         "scanned_javascript_files": len(scanned_files),
+        "scanned_file_urls": scanned_files,
         "scanned_inline_script_pages": scanned_inline_pages,
+        "scanned_inline_page_urls": _first_party_pages(target_host, pages)[:max_inline_pages],
         "detections": detections,
         "note": "Automated matching uses known token formats plus high-entropy assignments. Validate any live credential immediately.",
     }

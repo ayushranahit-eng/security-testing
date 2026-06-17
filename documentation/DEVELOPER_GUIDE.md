@@ -161,7 +161,8 @@ We now explicitly distinguish between:
 - public website scan
 - authenticated application surface that exists but was not tested with credentials
 
-Current auth logic is a coverage classifier, not a login breaker.
+Current auth logic is still primarily a coverage classifier, with a light public
+login abuse probe when an obvious login form is present.
 
 `auth_surface_detector.py` helps identify:
 
@@ -174,6 +175,16 @@ Current auth logic is a coverage classifier, not a login breaker.
 - auth-like API routes
 
 This is used to improve reporting honesty and scan-boundary classification.
+
+If a public login form is found, the scanner now also performs a small burst of
+invalid sign-in attempts and looks for:
+
+- CAPTCHA or challenge prompts
+- temporary lockout or cooldown wording
+- simple throttle signals such as HTTP 429
+
+This remains a limited abuse-resistance signal, not a full authentication
+security assessment.
 
 ## PDF Strategy
 

@@ -43,6 +43,7 @@ from scanner.ssl_check              import check_ssl, evaluate_ssl
 from scanner.http_method_analyzer   import analyze_http_methods
 from scanner.javascript_secret_scanner import scan_javascript_secrets
 from scanner.html_secret_scanner    import scan_html_secrets
+from scanner.rendered_secret_scanner import scan_rendered_dom_secrets
 from scanner.dom_xss_scanner         import scan_dom_xss
 from scanner.directory_listing_scanner import scan_directory_listing
 from scanner.forced_browsing_scanner import scan_forced_browsing
@@ -57,6 +58,7 @@ from scanner.stored_xss_scanner     import scan_stored_xss
 from scanner.sql_injection_scanner  import scan_sql_injection
 from scanner.technology_fingerprinter import fingerprint_technology
 from scanner.api_rate_limit_scanner import scan_api_rate_limits
+from scanner.login_abuse_scanner import scan_login_abuse_protection
 from scanner.api_version_scanner    import scan_api_versions
 from scanner.csrf_scanner           import analyze_csrf_risk
 from scanner.dnssec_scanner         import scan_dnssec
@@ -77,6 +79,28 @@ if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+
+def _upsert_secret_finding(findings: list, vulnerability: str, detections: list) -> None:
+    if not detections:
+        return
+
+    details = [
+        f"{item['type']} in {item['source']} ({item['confidence']} confidence)"
+        for item in detections[:12]
+    ]
+    payload = {
+        "vulnerability": vulnerability,
+        "severity": max((item.get("severity", "Low") for item in detections), key=lambda s: {"Critical": 4, "High": 3, "Medium": 2, "Low": 1, "Info": 0}.get(s, 0)),
+        "details": details,
+        "secrets": detections,
+    }
+
+    for idx, finding in enumerate(findings):
+        if finding.get("vulnerability") == vulnerability:
+            findings[idx] = payload
+            return
+    findings.append(payload)
 
 
 def _emit_progress(progress, current_step: str, **metrics) -> None:
@@ -111,6 +135,11 @@ def _estimate_total_scan_seconds(discovered_pages: list, results: dict, discover
     total_forms = len(results.get("forms", []))
     total_inputs = len(results.get("inputs", []))
     total_api_calls = len(results.get("api_calls", [])) or len(results.get("api_calls") or [])
+    login_candidate_pages = len({
+        str(item.get("page") or "")
+        for item in results.get("inputs", [])
+        if str(item.get("type") or "").lower() == "password"
+    })
     total_query_params = sum(
         len(parse_qsl(urlparse(url).query, keep_blank_values=True))
         for url in discovered_pages
@@ -123,6 +152,7 @@ def _estimate_total_scan_seconds(discovered_pages: list, results: dict, discover
         + (min(total_inputs, 250) * 1)
         + (total_query_params * 7)
         + (min(total_api_calls, 150) * 0.4)
+        + (min(login_candidate_pages, 2) * 18)
     )
     return max(discovery_elapsed_seconds + 60, int(discovery_elapsed_seconds + active_seconds))
 
@@ -701,10 +731,12 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         "http_methods":              {},
         "api_versioning":            {},
         "html_secrets":              {},
+        "rendered_dom_secrets":      {},
         "javascript_secrets":        {},
         "technology_fingerprint":    {},
         "graphql":                   {},
         "api_rate_limiting":         {},
+        "login_abuse_protection":    {},
         "csrf":                      {},
         "http_response_splitting":   [],
         "path_traversal":            [],
@@ -923,6 +955,31 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
         )
 
         # ── Active page testing pass ───────────────────────────────
+        publish(
+            "Testing login abuse protection",
+            scan_phase="active_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=0,
+            estimated_total_seconds=estimated_total_seconds,
+        )
+        results["login_abuse_protection"] = await scan_login_abuse_protection(
+            page,
+            start_url,
+            discovered_pages,
+            results["forms"],
+            results["inputs"],
+            results["findings"],
+            cfg,
+            progress=progress,
+        )
+        publish(
+            "Login abuse protection test complete",
+            scan_phase="active_scan",
+            pages_total=len(discovered_pages),
+            pages_scanned=0,
+            estimated_total_seconds=estimated_total_seconds,
+        )
+
         total_pages = len(discovered_pages)
         for page_index, current_url in enumerate(discovered_pages, start=1):
             publish(
@@ -1473,6 +1530,41 @@ async def run_scan(target_url: str, cfg: dict, progress=None) -> dict:
             results["findings"],
             cfg,
         )
+        results["rendered_dom_secrets"] = await scan_rendered_dom_secrets(
+            page,
+            start_url,
+            sorted(visited_pages),
+            cfg,
+        )
+        combined_html_secret_detections = results["html_secrets"].get("detections", []) + results["rendered_dom_secrets"].get("detections", [])
+        if combined_html_secret_detections:
+            seen = set()
+            deduped = []
+            severity_rank = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1, "Info": 0}
+            highest = "Info"
+            for item in combined_html_secret_detections:
+                key = (item.get("type"), item.get("source"), item.get("value_preview"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(item)
+                if severity_rank.get(item.get("severity", "Info"), 0) > severity_rank.get(highest, 0):
+                    highest = item.get("severity", "Info")
+            results["html_secrets"]["detections"] = deduped
+            results["html_secrets"]["status"] = "Secrets detected in HTML or rendered DOM"
+            results["html_secrets"]["rendered_scanned_pages"] = results["rendered_dom_secrets"].get("scanned_pages", 0)
+            results["html_secrets"]["rendered_scanned_page_urls"] = results["rendered_dom_secrets"].get("scanned_page_urls", [])
+            results["html_secrets"]["note"] = (
+                "This combines raw HTML scanning with a browser-rendered DOM pass so client-side injected values are also reviewed."
+            )
+            _upsert_secret_finding(
+                results["findings"],
+                "Hardcoded Secrets in HTML",
+                deduped,
+            )
+        else:
+            results["html_secrets"]["rendered_scanned_pages"] = results["rendered_dom_secrets"].get("scanned_pages", 0)
+            results["html_secrets"]["rendered_scanned_page_urls"] = results["rendered_dom_secrets"].get("scanned_page_urls", [])
         publish(
             "HTML secret scan complete",
             scan_phase="post_scan",

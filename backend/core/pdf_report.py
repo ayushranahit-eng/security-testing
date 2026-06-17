@@ -6,11 +6,21 @@ frontend can download a stable backend-generated file.
 """
 
 import asyncio
+import base64
 from html import escape
+from pathlib import Path
 
 from playwright.async_api import async_playwright
 
 from core.reporter import generate_readable_json
+
+
+def _load_pdf_logo_data_uri() -> str:
+    logo_path = Path(__file__).resolve().parents[2] / "frontend" / "assets" / "hit.png"
+    if not logo_path.exists():
+        return ""
+    encoded = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def build_pdf_filename(target_url: str, scan_time: str) -> str:
@@ -64,6 +74,12 @@ def _build_report_html(report: dict) -> str:
     target = escape(meta.get("target", "Security Assessment"))
     completed = escape(meta.get("scan_completed_at", ""))
     summary_text = escape(summary.get("summary", ""))
+    logo_data_uri = _load_pdf_logo_data_uri()
+    logo_markup = (
+        f"<img src='{logo_data_uri}' alt='Hands In Technology' "
+        "style='max-width:26px;max-height:26px;width:auto;height:auto;display:block'>"
+        if logo_data_uri else ""
+    )
 
     surface_pages = attack_surface.get("pages", {})
     surface_inputs = attack_surface.get("inputs", {})
@@ -77,6 +93,7 @@ def _build_report_html(report: dict) -> str:
     technology = security.get("technology", {})
     graphql = security.get("graphql", {})
     api_rate_limiting = security.get("api_rate_limiting", {})
+    login_abuse_protection = security.get("login_abuse_protection", {})
     csrf = security.get("csrf", {})
     source_maps = security.get("source_maps", {})
     directory_listing = security.get("directory_listing", {})
@@ -109,6 +126,7 @@ def _build_report_html(report: dict) -> str:
         auth_surface=auth_surface,
         csrf=csrf,
         api_rate_limiting=api_rate_limiting,
+        login_abuse_protection=login_abuse_protection,
         javascript_secrets=javascript_secrets,
         dom_xss=dom_xss,
         open_redirect=open_redirect,
@@ -329,9 +347,14 @@ def _build_report_html(report: dict) -> str:
     <section class="cover">
       <div class="cover-top">
         <div>
-          <div class="brand-small">HIT SecureScan</div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+            <div style="background:#fff;border-radius:8px;padding:5px;display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;overflow:hidden">{logo_markup}</div>
+            <div>
+              <div style="font-size:15px;font-weight:700">HIT SecureScan</div>
+              <p style="margin:2px 0 0;color:rgba(255,255,255,0.78)">Security Engineer Report</p>
+            </div>
+          </div>
           <h1>{target}</h1>
-          <p>Security Engineer Report</p>
           <p>Completed at {completed}</p>
           <div class="risk-badge">Risk: {risk}</div>
         </div>
@@ -381,7 +404,13 @@ Third-party services: {surface_network.get("third_party_service", 0)}</div>
 
     <section class="section">
       <div class="card cta">
-        <h4>Need Help Fixing This?</h4>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+          <div style="background:#fff;border-radius:8px;padding:5px;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;overflow:hidden">{logo_markup}</div>
+          <div>
+            <div class="brand-small" style="color:#1849a9;opacity:1">Remediation Support</div>
+            <h4 style="margin:4px 0 0">Need Help Fixing This?</h4>
+          </div>
+        </div>
         <p>Hands In Technology can help validate findings, harden your website, secure APIs, fix input handling issues, review secrets exposure, and turn this report into a practical remediation roadmap.</p>
         <div class="split">
           <div>
@@ -431,6 +460,7 @@ def _build_assessment_items(report: dict, analysis: dict) -> list[dict]:
     auth_surface = analysis.get("auth_surface", {})
     csrf = analysis.get("csrf", {})
     api_rate_limiting = analysis.get("api_rate_limiting", {})
+    login_abuse_protection = analysis.get("login_abuse_protection", {})
     findings = report.get("findings", [])
 
     items = []
@@ -503,24 +533,28 @@ def _build_assessment_items(report: dict, analysis: dict) -> list[dict]:
             "fix": "Run an authenticated scan or manual review before treating the application as fully assessed.",
         })
 
-    if csrf.get("count", 0) or "No throttling" in str(api_rate_limiting.get("status", "")):
+    if csrf.get("count", 0) or "No throttling" in str(api_rate_limiting.get("status", "")) or "No clear login abuse protection observed" in str(login_abuse_protection.get("status", "")):
         items.append({
             "title": "Application Defense Checks",
             "severity": "Medium",
             "status": csrf.get("status", "Application defense checks completed"),
-            "analysis": api_rate_limiting.get("status", "API rate-limiting check not available."),
+            "analysis": " ".join(filter(None, [
+                api_rate_limiting.get("status", ""),
+                login_abuse_protection.get("status", ""),
+            ])).strip() or "Application defense checks completed.",
             "evidence": "\n".join([
                 f"POST forms without token signals: {csrf.get('count', 0)}",
                 f"Rate-limit probe statuses: {', '.join(str(x) for x in api_rate_limiting.get('statuses', [])) or 'Not tested'}",
+                f"Login abuse protection: {login_abuse_protection.get('status', 'Not tested')}",
             ]),
-            "fix": "Add anti-CSRF protections on state-changing forms and apply throttling or abuse controls to exposed API endpoints.",
+            "fix": "Add anti-CSRF protections on state-changing forms and apply throttling, lockout, or challenge-based abuse controls to exposed sign-in and API endpoints.",
         })
 
     covered = {
         "Missing Security Headers", "Weak Cookie Flags", "SSL Certificate Issue", "SSL Certificate Expiring Soon",
         "Weak TLS Protocol Supported", "Weak Cipher Suites Accepted", "HTTP Methods Enabled", "HTTP TRACE Enabled",
         "Verbose Error Messages", "Server Header Disclosure", "GraphQL Introspection", "JavaScript Source Maps",
-        "Directory Listing Enabled", "Forced Browsing", "CSRF", "API Rate Limiting Absent", "JavaScript Secrets Exposed",
+        "Directory Listing Enabled", "Forced Browsing", "CSRF", "API Rate Limiting Absent", "Credential Stuffing Signal", "JavaScript Secrets Exposed",
         "DOM-Based XSS", "Open Redirect", "Reflected XSS", "Stored XSS", "SQL Injection", "Sensitive Path Detected",
     }
     for finding in findings:

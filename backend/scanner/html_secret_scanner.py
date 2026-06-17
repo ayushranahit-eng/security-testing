@@ -17,7 +17,7 @@ from scanner.javascript_secret_scanner import (
 
 def scan_html_secrets(target_url: str, pages: list, initial_html: str, findings: list, cfg: dict) -> dict:
     target_host = urlparse(target_url).netloc.lower()
-    max_pages = int(cfg.get("max_html_secret_pages", 10))
+    max_pages = int(cfg.get("max_pages", cfg.get("max_html_secret_pages", 20)))
     max_bytes = int(cfg.get("max_download_bytes_per_file", 500_000))
 
     detections = []
@@ -52,6 +52,7 @@ def scan_html_secrets(target_url: str, pages: list, initial_html: str, findings:
     return {
         "status": "Secrets detected in HTML" if detections else "No secrets detected in HTML",
         "scanned_pages": len(scanned_pages),
+        "scanned_page_urls": scanned_pages,
         "detections": detections,
         "note": "This complements JavaScript secret scanning by checking rendered HTML, inline JSON, meta tags, and template output.",
     }
