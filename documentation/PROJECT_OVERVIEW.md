@@ -4,7 +4,7 @@
 
 This project is an automated public-scope web security scanner. It crawls a target website, discovers pages and frontend elements, captures API calls triggered by browser interaction, and runs exposure, misconfiguration, and initial active-validation checks.
 
-The current backend is a FastAPI service powered by Playwright.
+The current backend is a FastAPI service powered by Playwright. A separate React + Vite product UI prototype lives in `frontend2/`.
 
 ## Current Capabilities
 
@@ -45,6 +45,30 @@ The current backend is a FastAPI service powered by Playwright.
 - Probes common sensitive paths like `.env`, `.git/config`, Swagger files, admin paths, and config files.
 - Analyzes CORS misconfigurations.
 - Produces raw JSON, readable JSON, and text reports.
+- Optionally persists users, account plans, scan jobs, raw scan results, and findings to MongoDB.
+- Exposes DB-backed scan history and all-domain findings for dashboard views.
+
+## Product UI
+
+`frontend2/` is the current React + Vite product UI prototype.
+
+It includes:
+
+- Public landing gate before the signed-in dashboard.
+- Login/create-account verification against `GET /api/me`.
+- Dashboard greeting using the account first name.
+- Top navigation showing current plan and live scans-left quota from MongoDB.
+- Scan a Domain page with live progress, ETA states, final completion duration, PDF download, and recent scans loaded from `GET /api/scans`.
+- Vulnerabilities page showing findings across all domains and all stored scans from `GET /api/findings`.
+- Pricing page opened from upgrade buttons as a full-page view, not from the sidebar.
+- Active Monitoring module locked behind the Advanced plan.
+- Deep Scan module locked behind the Premium plan.
+
+Current plan positioning:
+
+- Basic: free plan for public URL scans and reports.
+- Advanced: adds Active Monitoring and includes 50 public URL scans.
+- Premium: adds Deep Scan and includes unlimited public URL scans.
 
 ## Repository Layout
 
@@ -57,6 +81,7 @@ security-testing/
 |   +-- core/
 |   +-- scanner/
 |   +-- tests/
++-- frontend2/
 +-- documentation/
 +-- .gitignore
 ```
@@ -68,6 +93,9 @@ security-testing/
 - `backend/core/reporter.py`: Readable JSON and text report generation.
 - `backend/scanner/`: Individual scanner checks for crawling, headers, cookies, SSL, certificate transparency, subdomain takeover signals, baseline-driven alerts, passive host intelligence, domain breach history, server-header disclosure, domain posture, DNSSEC, open ports, HTTP methods, technology fingerprinting, GraphQL exposure, rate limiting, CSRF risk, HTML secrets, JavaScript secrets, source maps, API version exposure, path traversal, HTTP response splitting, directory listing, forced browsing, verbose errors, CORS, sensitive paths, open redirect validation, DOM-based XSS validation, reflected XSS validation, stored XSS validation, SQL injection validation, and interaction.
 - `backend/config.py`: Default scan limits, timeouts, headers, test input values, and unsafe button skip rules.
+- `backend/db.py`: Optional MongoDB persistence for users, account plans, scans, and findings.
+- `frontend2/src/LandingGate.jsx`: Public landing/login gate before dashboard access.
+- `frontend2/src/App.jsx`: Signed-in dashboard, scan workflow, plan-gated modules, pricing, and findings views.
 
 ## Current Stage
 

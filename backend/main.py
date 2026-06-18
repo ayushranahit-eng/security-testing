@@ -30,6 +30,7 @@ from core.reporter import generate_text_report, generate_readable_json
 from scanner.cookies import analyse_cookies
 from scanner.headers import check_headers
 from scanner.ssl_check import check_ssl, evaluate_ssl
+import db as mongo
 
 app = FastAPI(
     title="Security Scanner API",
@@ -39,6 +40,22 @@ app = FastAPI(
 
 SCAN_JOBS: dict[str, dict] = {}
 SCAN_LOCK = threading.Lock()
+
+
+@app.on_event("startup")
+def startup_event():
+    if not mongo.mongo_enabled():
+        return
+    try:
+        mongo.init_mongo()
+        print("MongoDB persistence enabled")
+    except Exception as exc:
+        print(f"MongoDB persistence disabled: {exc}")
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    mongo.close_mongo()
 
 app.add_middleware(
     CORSMiddleware,
@@ -95,6 +112,7 @@ def _public_job(scan_id: str) -> dict:
 
 
 def _update_job(scan_id: str, **updates) -> None:
+    mongo_event = updates.get("event")
     with SCAN_LOCK:
         job = SCAN_JOBS.get(scan_id)
         if job is not None:
@@ -107,6 +125,17 @@ def _update_job(scan_id: str, **updates) -> None:
                 events.append(event)
                 job["event_count"] = len(events)
             job["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _persist_scan_update(scan_id, updates, mongo_event)
+
+
+def _persist_scan_update(scan_id: str, updates: dict, event: dict | None = None) -> None:
+    if not mongo.mongo_enabled():
+        return
+    try:
+        if mongo.is_ready():
+            mongo.update_scan(scan_id, updates, event=event)
+    except Exception as exc:
+        print(f"MongoDB scan update skipped for {scan_id}: {exc}")
 
 
 async def _run_background_scan(scan_id: str, req: ScanRequest) -> None:
@@ -147,6 +176,12 @@ async def _run_background_scan(scan_id: str, req: ScanRequest) -> None:
                     "message": "Scan completed",
                 })
                 job["event_count"] = len(events)
+        if mongo.mongo_enabled():
+            try:
+                if mongo.is_ready():
+                    mongo.complete_scan(scan_id, data)
+            except Exception as exc:
+                print(f"MongoDB scan completion skipped for {scan_id}: {exc}")
     except Exception as exc:
         traceback.print_exc()
         with SCAN_LOCK:
@@ -488,6 +523,13 @@ async def scan_start(req: ScanRequest):
             "finished_at": None,
         }
 
+    if mongo.mongo_enabled():
+        try:
+            if mongo.is_ready():
+                mongo.create_scan(scan_id, str(req.url), _build_cfg(req))
+        except Exception as exc:
+            print(f"MongoDB scan create skipped for {scan_id}: {exc}")
+
     asyncio.create_task(_run_background_scan(scan_id, req))
     return _public_job(scan_id)
 
@@ -550,6 +592,93 @@ def scan_status(
             return generate_readable_json(result, scan_time)
 
     return _public_job(scan_id)
+
+
+@app.get("/me")
+def current_user():
+    if not mongo.mongo_enabled() or not mongo.is_ready():
+        return {
+            "first_name": "Ayush",
+            "last_name": "Rana",
+            "email": "ayush@example.com",
+            "company_name": "Hands In Technology",
+            "company_url": None,
+            "account_plan": {
+                "name": "Basic",
+                "no_of_scans_available": 5,
+            },
+            "scans_used": len(SCAN_JOBS),
+            "scans_left": max(0, 5 - len(SCAN_JOBS)),
+            "persistence": "memory",
+        }
+
+    database = mongo.get_db()
+    user = database.users.find_one({"email": mongo.DEFAULT_USER_EMAIL})
+    plan = database.account_plans.find_one({"_id": user.get("account_plan_id")}) if user else None
+    scans_used = database.scans.count_documents({"user_id": user["_id"]}) if user else 0
+    scans_available = int((plan or {}).get("no_of_scans_available", 0) or 0)
+    payload = mongo.serialize_doc(user) or {}
+    payload["account_plan"] = mongo.serialize_doc(plan)
+    payload["scans_used"] = scans_used
+    payload["scans_left"] = max(0, scans_available - scans_used)
+    payload["persistence"] = "mongodb"
+    return payload
+
+
+@app.get("/account-plans")
+def account_plans():
+    if not mongo.mongo_enabled() or not mongo.is_ready():
+        return [
+            {
+                "name": "Basic",
+                "no_of_scans_available": 5,
+                "persistence": "memory",
+            }
+        ]
+    database = mongo.get_db()
+    return [mongo.serialize_doc(plan) for plan in database.account_plans.find().sort("no_of_scans_available", 1)]
+
+
+@app.get("/scans")
+def scans(limit: int = Query(20, ge=1, le=100)):
+    if not mongo.mongo_enabled() or not mongo.is_ready():
+        with SCAN_LOCK:
+            jobs = sorted(
+                SCAN_JOBS.values(),
+                key=lambda item: item.get("created_at", ""),
+                reverse=True,
+            )[:limit]
+            return [dict(job, result=None) for job in jobs]
+
+    database = mongo.get_db()
+    docs = database.scans.find(
+        {},
+        {"raw_result": 0},
+    ).sort("created_at", -1).limit(limit)
+    return [mongo.serialize_doc(doc) for doc in docs]
+
+
+@app.get("/findings")
+def findings(
+    status: str | None = None,
+    severity: str | None = None,
+    domain: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+):
+    if not mongo.mongo_enabled() or not mongo.is_ready():
+        return []
+
+    query = {}
+    if status:
+        query["status"] = status.lower()
+    if severity:
+        query["severity"] = severity.lower()
+    if domain:
+        query["domain"] = domain.lower()
+
+    database = mongo.get_db()
+    docs = database.findings.find(query).sort("created_at", -1).limit(limit)
+    return [mongo.serialize_doc(doc) for doc in docs]
 
 
 @app.get("/scan/result/{scan_id}", include_in_schema=False)

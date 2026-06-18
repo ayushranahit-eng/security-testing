@@ -39,7 +39,7 @@ It is responsible for:
 
 ### 2. Frontend
 
-The frontend is a presentation layer.
+The frontend is a presentation layer. `frontend2/` is the current React + Vite product UI prototype.
 
 It is responsible for:
 
@@ -47,6 +47,8 @@ It is responsible for:
 - showing live scan progress in plain language
 - rendering the readable report
 - downloading the backend-generated PDF
+- showing stored scan history and findings from MongoDB-backed APIs
+- gating plan-specific modules such as Active Monitoring and Deep Scan
 
 The frontend does not own scanning logic and should not be treated as the source of truth for findings.
 
@@ -267,6 +269,10 @@ Key frontend files:
 - `frontend/index.html`
 - `frontend/app.js`
 - `frontend/styles.css`
+- `frontend2/src/LandingGate.jsx`
+- `frontend2/src/App.jsx`
+- `frontend2/src/styles.css`
+- `frontend2/vite.config.js`
 
 Key documentation files:
 
@@ -274,6 +280,8 @@ Key documentation files:
 - `documentation/TRUST_AND_CAPABILITY_BOUNDARIES.md`
 - `documentation/AI_USAGE_STRATEGY.md`
 - `documentation/SCAN_MODES_STRATEGY.md`
+- `documentation/FRONTEND2_PRODUCT_UI.md`
+- `documentation/MONGODB_DATA_MODEL.md`
 
 ## Working Style For Future AI Assistants
 
