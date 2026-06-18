@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { apiUrl } from "./api.js";
 import DashboardApp from "./App.jsx";
 
 const capabilities = [
@@ -39,11 +40,11 @@ function LandingGate() {
     setError("");
 
     try {
-      const response = await fetch("/api/me");
+      const response = await fetch(apiUrl("/api/me"));
       if (!response.ok) throw new Error("Account verification failed");
       setAccount(await response.json());
     } catch {
-      setError("Could not verify account. Start the backend on port 8000 and confirm MongoDB is configured.");
+      setError("Could not verify account. Confirm the backend service is reachable and MongoDB is configured.");
     } finally {
       setLoading(false);
     }

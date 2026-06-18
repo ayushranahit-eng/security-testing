@@ -29,6 +29,7 @@ import {
   Wifi,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { apiUrl } from "./api.js";
 
 const STORAGE_KEY = "hit-securescan-history-v1";
 const emptyCounts = { Critical: 0, High: 0, Medium: 0, Low: 0, Info: 0 };
@@ -242,7 +243,7 @@ function App() {
 
   async function loadAccount() {
     try {
-      const response = await fetch("/api/me");
+      const response = await fetch(apiUrl("/api/me"));
       if (!response.ok) return;
       const payload = await response.json();
       setAccount({ ...defaultAccount, ...payload });
@@ -253,7 +254,7 @@ function App() {
 
   async function loadRecentScans() {
     try {
-      const response = await fetch("/api/scans?limit=12");
+      const response = await fetch(apiUrl("/api/scans?limit=12"));
       if (!response.ok) return;
       const payload = await response.json();
       setRecentScans(Array.isArray(payload) ? payload : []);
@@ -291,7 +292,7 @@ function App() {
     });
 
     try {
-      const response = await fetch("/api/scan", {
+      const response = await fetch(apiUrl("/api/scan"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -311,7 +312,7 @@ function App() {
       await pollScan(job.scan_id);
     } catch (scanError) {
       setIsScanning(false);
-      setError("Could not start the scan. Confirm the backend is running on http://localhost:8000.");
+      setError("Could not start the scan. Confirm the backend service is reachable.");
       setLiveStatus((current) => ({
         ...(current || {}),
         status: "Failed",
@@ -323,7 +324,7 @@ function App() {
 
   async function pollScan(id) {
     try {
-      const response = await fetch(`/api/scan/status/${id}?readable=true`);
+      const response = await fetch(apiUrl(`/api/scan/status/${id}?readable=true`));
       if (!response.ok) throw new Error(await response.text());
       const payload = await response.json();
 
@@ -366,7 +367,7 @@ function App() {
 
   async function downloadPdf() {
     if (!scanId) return;
-    const response = await fetch(`/api/scan/status/${scanId}?pdf=true`);
+    const response = await fetch(apiUrl(`/api/scan/status/${scanId}?pdf=true`));
     if (!response.ok) {
       setError("PDF is not ready yet.");
       return;
@@ -762,7 +763,7 @@ function VulnerabilitiesPage() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/findings?limit=200");
+      const response = await fetch(apiUrl("/api/findings?limit=200"));
       if (!response.ok) throw new Error("Findings request failed");
       const payload = await response.json();
       setFindings(Array.isArray(payload) ? payload : []);
