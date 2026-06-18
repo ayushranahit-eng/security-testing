@@ -57,7 +57,7 @@ These checks are generally reliable as direct signals:
 - SSL/TLS problems
 - readable sensitive path exposure
 - blocked sensitive path detection signals
-- CORS policy observations
+- risky CORS policy observations
 - page and API discovery
 - JavaScript secret pattern matches
 
@@ -71,8 +71,8 @@ These checks are useful and meaningful, but may still need confirmation:
 - reflected XSS validation
 - DOM-based XSS validation
 - stored XSS validation
-- SQL injection signals based on errors or anomalies
-- login abuse protection signals on public login forms
+- SQL injection signals based on database errors or strong response anomalies
+- limited login abuse protection signals on obvious public login forms
 
 These can reveal real vulnerabilities, but:
 
@@ -91,11 +91,11 @@ These are areas the scanner does not yet fully cover:
 - multi-step stateful attacks
 - deep stored XSS coverage across complex workflows
 - deeper SQL injection confirmation and exploitation logic
-- CSRF validation
+- full CSRF exploit validation
 - SSRF validation
 - file upload abuse validation
 - technology fingerprinting and CVE correlation
-- rate-limiting and abuse-resistance testing
+- broad rate-limiting and abuse-resistance testing
 - deep or distributed login abuse resistance testing
 
 ## What Users Can Trust

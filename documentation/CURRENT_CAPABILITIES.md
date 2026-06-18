@@ -1,253 +1,182 @@
 # Current Capabilities
 
-This document summarizes what the scanner can currently detect, why each capability matters, and the security risk it helps identify.
+This document explains what the scanner can really do today from a normal URL scan, what confidence each capability carries, and where readers should not over-assume coverage.
 
-## Capability Summary
+## Short Version
 
-| Capability | Importance | Impact | Risk |
-| --- | --- | --- | --- |
-| Security header analysis | Verifies browser-side protections are configured. | Reduces exposure to XSS, clickjacking, MIME sniffing, and downgrade attacks. | Low to Medium |
-| SSL/TLS certificate and transport analysis | Confirms encrypted communication is trusted and valid, and checks for legacy TLS support and weak cipher acceptance. | Prevents user trust issues, reduces man-in-the-middle risk, and highlights outdated HTTPS hardening. | Medium to High |
-| Cookie security analysis | Checks whether session cookies are protected. | Helps prevent session theft, token leakage, and cross-site request abuse. | Medium to High |
-| HTTP method analysis | Reviews advertised and risky HTTP methods such as TRACE, PUT, DELETE, and PATCH. | Helps identify unnecessary protocol surface and legacy risky behavior. | Low to Medium |
-| Page crawling | Maps reachable application pages. | Builds a broader attack surface inventory instead of scanning only one URL. | Informational to Medium |
-| Form and input discovery | Finds user-controlled entry points. | Identifies areas that need injection, validation, and workflow testing. | Medium |
-| Safe interaction testing | Interacts with pages to reveal hidden flows and API calls. | Discovers behavior that static crawling may miss. | Medium |
-| API endpoint discovery | Captures frontend-triggered backend requests. | Reveals hidden or undocumented API surfaces that may need authorization testing. | Medium to High |
-| Technology fingerprinting | Identifies likely frameworks, CMS markers, server technologies, and API styles. | Helps defenders understand exposed stack components and prioritize patch review. | Informational to Medium |
-| GraphQL introspection checks | Tests whether GraphQL schema metadata is exposed publicly. | Helps detect schema disclosure that speeds up attacker reconnaissance. | Low to Medium |
-| API rate-limit checks | Sends a small burst of requests to exposed API-like endpoints. | Helps detect missing throttling that can support brute force and scraping. | Low to Medium |
-| Login abuse protection checks | Sends a small burst of invalid login attempts to obvious public sign-in forms and watches for CAPTCHA, lockout, cooldown, or throttling signals. | Helps detect weak resistance to credential stuffing and repeated password-guessing on public login pages. | Medium |
-| CSRF risk detection | Reviews state-changing forms for likely anti-CSRF token presence. | Helps detect weak request-forgery protections in browser workflows. | Medium |
-| Server header disclosure checks | Reviews response headers for server, runtime, proxy, and framework banners. | Helps detect technology disclosure that speeds up attacker stack profiling. | Low |
-| HTML secret scanning | Detects exposed keys, tokens, and credentials rendered directly into HTML. | Helps prevent credential leakage through templates, meta tags, inline JSON, and page source. | High to Critical |
-| JavaScript secret scanning | Detects exposed keys, tokens, and credentials in frontend code. | Helps prevent unauthorized API use, cloud abuse, and credential leakage from client-side assets. | High to Critical |
-| Open redirect validation | Tests redirect-style parameters and flows for attacker-controlled redirects. | Helps prevent phishing, trust abuse, and token-forwarding style attacks. | Medium to High |
-| DOM-based XSS validation | Tests client-side handling of attacker-controlled fragment input. | Helps identify browser-side code execution risk caused by unsafe DOM sinks. | High to Critical |
-| Reflected XSS validation | Tests whether input is reflected back into the page without safe handling. | Helps identify browser-side script execution risk, session theft, and phishing overlays. | High to Critical |
-| Stored XSS validation | Tests whether attacker-controlled HTML persists after submission and reload. | Helps identify persistent browser-side code execution risk affecting later viewers. | High to Critical |
-| SQL injection validation | Tests low-risk parameters and forms for database error leakage and response anomalies. | Helps identify injection paths that could expose or modify database content. | High to Critical |
-| Path traversal validation | Tests low-risk file-style parameters for direct filesystem-read traversal signals. | Helps detect unauthorized server file access through path normalization flaws. | High |
-| API version exposure checks | Probes sibling public API versions near discovered versioned endpoints. | Helps detect stale or parallel API versions that may drift from newer security controls. | Low to Medium |
-| Sensitive path probing | Tests common exposed files and admin/config paths. | Detects leaked secrets, config files, backups, API docs, and admin panels. | Medium to Critical |
-| Open port checks | Tests a small common-port list for extra public-facing services. | Helps detect accidental exposure of admin, database, development, or alternate web services. | Low to Medium |
-| DNSSEC checks | Checks whether the public domain publishes DNSKEY records. | Helps highlight DNS hardening gaps on production-facing domains. | Low |
-| HTTP response splitting validation | Tests whether CRLF input can inject arbitrary response headers. | Helps detect cache-poisoning, header-injection, and redirect-manipulation risk. | High |
-| Domain age and parking posture checks | Uses public registration-age and parking signals as passive trust context. | Helps identify newly registered or parked domains that deserve extra scrutiny. | Low |
-| Certificate transparency monitoring | Pulls public CT records for the target domain. | Helps inventory public subdomains and certificate-linked exposure outside the main crawl. | Informational to Medium |
-| New subdomain alerts | Compares current CT-discovered subdomains against the last saved baseline. | Helps detect new public-facing assets that may not have gone through normal review. | Low to Medium |
-| Subdomain takeover checks | Tests CT-discovered subdomains for dangling third-party hosting fingerprints. | Helps detect abandoned DNS mappings that attackers may be able to claim. | High |
-| SSL certificate expiry monitor | Tracks certificate expiry against a configurable renewal threshold. | Helps catch renewal risk early before browser trust breaks. | Low to Medium |
-| Security header regression alerts | Compares current response headers with the previous baseline. | Helps detect when previously present protections silently disappear. | Medium |
-| Exposed asset drift detection | Compares public pages and API calls with the previous baseline. | Helps detect newly exposed or unexpectedly removed public assets. | Low to Medium |
-| Passive host intelligence | Queries public passive internet exposure data for the resolved host IP. | Helps reveal externally observed ports, tags, and vulnerability hints. | Low to Medium |
-| Passive IP reputation heuristics | Scores public IP risk signals from passively observed exposure. | Helps triage whether the host deserves closer review. | Low to Medium |
-| Domain credential leak checks | Checks public breach catalogs for domain-linked breach history. | Helps surface credential reuse and phishing pressure tied to the domain. | Medium |
-| Exposure scoring | Calculates a simple passive exposure score from public host-intelligence signals. | Helps summarize how broad or noisy the public footprint looks. | Low to Medium |
-| JavaScript source map checks | Tests whether `.map` files for production JavaScript are publicly accessible. | Helps detect source disclosure that reveals original code and implementation details. | Low to Medium |
-| Directory listing checks | Detects directory index pages served by the web server. | Helps detect accidental exposure of file structures and forgotten assets. | Low to Medium |
-| Forced browsing checks | Tests common unlinked internal/admin-style paths for direct reachability. | Helps detect internal routes that are exposed without being linked in the UI. | Low to Medium |
-| Verbose error checks | Probes error responses for stack traces, SQL errors, and framework exception text. | Helps detect information leakage that assists attacker reconnaissance. | Low to Medium |
-| CORS security analysis | Checks risky cross-origin trust behavior. | Finds misconfigurations that could allow malicious sites to read user data. | Medium to Critical |
-| Report generation | Converts scan data into readable output. | Helps developers understand findings and decide next actions. | Operational |
+The system is a real public-scope web security scanner. It can crawl a target URL with Playwright, discover public pages and browser-visible attack surface, capture frontend-triggered requests, run exposure and misconfiguration checks, perform conservative active validation for selected vulnerability classes, and generate readable reports.
 
-## Detailed Capabilities
+It is strongest as:
 
-### Security Header Analysis
+- a public attack-surface discovery tool
+- a misconfiguration and exposure scanner
+- a frontend secret and sensitive-file detector
+- an initial vulnerability triage layer
+- a repeatable baseline monitor for public surface drift
 
-Checks for important headers such as:
+It is not yet:
 
-- Content-Security-Policy
-- X-Frame-Options
-- Strict-Transport-Security
-- X-Content-Type-Options
-- Referrer-Policy
+- a full penetration test replacement
+- an authenticated application scanner
+- a role/permission testing engine
+- a complete exploit-confirmation engine
+- proof that a clean site is secure
 
-Importance: These headers add browser-level defenses.
+## Scan Mode Covered Today
 
-Impact: Missing headers can increase exposure to XSS, clickjacking, content sniffing, weak referrer handling, and HTTPS downgrade risks.
+Current URL scanning is best described as:
 
-Risk: Low to Medium, depending on the missing header and application context.
+```text
+unauthenticated_public_scan
+```
 
-### SSL/TLS Certificate and Transport Analysis
+The scanner can only test what is publicly reachable without credentials. If it detects login, signup, password reset, or auth-like API routes, it reports that authenticated functionality appears to exist, but it does not fully assess the post-login application.
+
+Default scan limits are currently:
+
+- `max_pages`: 20
+- `max_depth`: 2
+- active validation against discovered public pages
+- a short list of public ports and sensitive paths
+- lightweight API/login abuse probes
+
+## Capability Confidence
+
+| Confidence | Capability Type | What This Means |
+| --- | --- | --- |
+| High | Direct observations and exposure checks | Usually actionable when detected. Examples: missing headers, exposed sensitive files, weak cookie flags, TLS issues, readable source maps, JavaScript secrets. |
+| Medium | Initial active validation signals | Useful security signals, but critical findings should be manually reproduced. Examples: reflected XSS, DOM XSS, stored XSS, SQLi anomaly, open redirect, login abuse signal. |
+| Low / Contextual | Passive, heuristic, or broad posture signals | Helpful for triage, but not proof of exploitation. Examples: technology fingerprinting, domain age, passive host intelligence, DNSSEC, public breach catalog matches. |
+
+## What It Actually Checks
+
+### Attack Surface Discovery
+
+The scanner uses Playwright to load the site like a browser and discover:
+
+- public internal pages
+- links
+- forms
+- input fields
+- textareas
+- buttons
+- cookies
+- browser network requests
+- frontend-triggered API-like calls
+
+It also performs limited safe interaction with visible controls and form fields. It avoids destructive-looking buttons such as delete, logout, purchase, checkout, deactivate, unsubscribe, wipe, destroy, and similar actions.
+
+Confidence: High for discovered public surface, limited by crawl depth, page count, JavaScript behavior, and whether a flow requires authentication.
+
+### Security Headers
+
+Checks whether the first loaded response includes:
+
+- `Content-Security-Policy`
+- `X-Frame-Options`
+- `Strict-Transport-Security`
+- `X-Content-Type-Options`
+- `Referrer-Policy`
+
+Confidence: High for the tested response.
+
+Limitations: This is not a full per-route header audit unless those routes are separately loaded and analyzed elsewhere.
+
+### Cookie Flags
+
+Checks browser-collected cookies for:
+
+- `Secure`
+- `HttpOnly`
+- `SameSite`
+
+The scanner separates likely tracking/third-party cookies from possible session/application cookies where possible.
+
+Confidence: High for observed cookies.
+
+Limitations: It cannot evaluate cookies that only appear after login or deeper workflows.
+
+### SSL/TLS
 
 Checks:
 
 - certificate validity
 - certificate expiry
-- hostname trust
 - negotiated TLS protocol
 - negotiated cipher
-- support for legacy TLS 1.0 and TLS 1.1
-- acceptance of weak cipher suites
+- legacy TLS 1.0 / 1.1 support
+- acceptance of a small set of weak cipher suites
 
-Importance: Users and APIs depend on trusted encrypted communication.
+Confidence: High for the target hostname tested.
 
-Impact: Invalid or expired certificates can break user trust, trigger browser warnings, and increase interception risk. Legacy protocol or weak cipher support can leave the origin compatible with transport settings that should already be retired.
+Limitations: This is not a full SSL Labs-style transport audit across every CDN edge or hostname.
 
-Risk: Medium to High.
+### HTTP Methods
 
-### Cookie Security Analysis
+Uses `OPTIONS` and `TRACE` against the origin to identify:
 
-Checks cookie flags:
+- advertised risky methods
+- TRACE exposure
 
-- Secure
-- HttpOnly
-- SameSite
+Confidence: Medium to High for the origin.
 
-Importance: Cookies often store session or authentication state.
+Limitations: It does not prove every advertised method is usable on every application route.
 
-Impact: Weak cookie settings can make session theft or cross-site attacks easier.
+### Server Header Disclosure
 
-Risk: Medium to High.
-
-### HTTP Method Analysis
-
-Checks whether the origin advertises or accepts risky HTTP methods such as:
-
-- TRACE
-- PUT
-- DELETE
-- PATCH
-
-Importance: Public applications should only expose the methods they actually need.
-
-Impact: Unnecessary methods increase attack surface and may indicate weak request hardening.
-
-Risk: Low to Medium.
-
-### Crawling and Discovery
-
-Discovers internal pages, links, forms, inputs, buttons, and cookies.
-
-Importance: Security testing is only useful when the visible attack surface is mapped.
-
-Impact: Reveals pages and workflows that may otherwise be missed.
-
-Risk: Informational to Medium.
-
-### Form and Interaction Analysis
-
-Fills safe test values into inputs and interacts with buttons while avoiding risky actions like delete, logout, purchase, and unsubscribe.
-
-Importance: Many modern applications expose behavior only after interaction.
-
-Impact: Helps uncover hidden forms, workflows, and network activity.
-
-Risk: Medium.
-
-### API Endpoint Discovery
-
-Captures API calls triggered by frontend pages and interactions.
-
-Importance: APIs are often more security-sensitive than the UI that calls them.
-
-Impact: Reveals undocumented endpoints that should be tested for authentication, authorization, and data exposure.
-
-Risk: Medium to High.
-
-### Technology Fingerprinting
-
-Looks for public signs of:
-
-- framework usage
-- CMS markers
-- server headers
-- JavaScript platform signatures
-- GraphQL/API style indicators
-
-Importance: Understanding public stack indicators helps prioritize hardening and patch validation.
-
-Impact: Exposed technology clues help attackers profile the application, but also help defenders close obvious gaps.
-
-Risk: Informational to Medium.
-
-### GraphQL Introspection Checks
-
-Tests likely GraphQL endpoints with a schema introspection query.
-
-Importance: GraphQL schemas can reveal object names, types, queries, and operations.
-
-Impact: Public schema visibility can accelerate attacker reconnaissance and endpoint mapping.
-
-Risk: Low to Medium.
-
-### API Rate-Limit Checks
-
-Sends a small burst of requests to an exposed API-like endpoint and looks for throttling signals such as:
-
-- HTTP 429
-- Retry-After headers
-- request blocking patterns
-
-Importance: Public APIs should resist brute force, scraping, and simple automation abuse.
-
-Impact: Missing throttling can support account attacks or high-volume abuse.
-
-Risk: Low to Medium.
-
-### Login Abuse Protection Checks
-
-If a clear public login form is discovered, the scanner sends a small burst of
-invalid login attempts and looks for:
-
-- CAPTCHA prompts or challenge widgets
-- temporary lockout or retry-later messaging
-- throttle signals such as HTTP 429
-
-Importance: Public sign-in flows should resist simple brute-force and
-credential-stuffing behavior.
-
-Impact: If repeated invalid attempts do not trigger friction or blocking, login
-endpoints may be easier to automate against at scale.
-
-Risk: Medium.
-
-### CSRF Risk Detection
-
-Reviews discovered POST forms for likely anti-CSRF token presence and state-changing behavior.
-
-Importance: Browser-authenticated actions need request-forgery protections.
-
-Impact: Missing anti-CSRF controls can allow attackers to trick logged-in users into performing unwanted actions.
-
-Risk: Medium.
-
-### Server Header Disclosure Checks
-
-Checks whether the origin discloses headers such as:
+Checks response headers such as:
 
 - `Server`
 - `X-Powered-By`
 - `X-AspNet-Version`
 - `X-AspNetMvc-Version`
 - `Via`
+- `X-Generator`
 
-Importance: Public banner disclosure makes it easier to fingerprint web servers, middleware, and application runtimes.
+Confidence: High for observed headers.
 
-Impact: Even when not directly exploitable, stack disclosure accelerates attacker reconnaissance and version-targeted exploit research.
+Risk: Usually low by itself, but useful for attacker reconnaissance and stack profiling.
 
-Risk: Low.
+### Sensitive Path Probing
 
-### HTML Secret Scanning
+Requests a curated list of common public paths, including:
 
-Scans rendered HTML responses for:
+- `.env`
+- `.git/HEAD`
+- `.git/config`
+- backup SQL/archive files
+- Swagger/OpenAPI files
+- Actuator endpoints
+- `phpinfo.php`
+- server status pages
+- config files
+- admin paths
+- common metadata files
 
-- API keys
-- JWT-like tokens
-- cloud credentials
-- high-entropy secrets
-- inline config leaks
+Readable 2xx-style responses are treated as exposure. HTTP 403 is treated as a blocked/detected route, not confirmed readable exposure.
 
-Importance: Secrets can leak through templates, inline JSON, meta tags, hydration data, and raw page source, not only JavaScript files.
+Confidence: High when readable sensitive content is detected.
 
-Impact: Exposed credentials can lead to unauthorized API use, impersonation, service abuse, or downstream compromise.
+Limitations: The list is finite and does not discover every possible sensitive file.
 
-Risk: High to Critical.
+### CORS Analysis
 
-### JavaScript Secret Scanning
+Sends crafted `Origin` headers and checks for:
 
-Scans first-party JavaScript files and inline scripts for:
+- wildcard `Access-Control-Allow-Origin`
+- wildcard plus credentials
+- reflected arbitrary origins
+- reflected origins with credentials
+- accepted `null` origin
+- absence of CORS headers
+
+Confidence: High for observed headers on the tested URL.
+
+Important interpretation: No CORS headers are usually the browser-safe default, not automatically a vulnerability. Risk increases when arbitrary origins are allowed or reflected, especially with credentials.
+
+### JavaScript, HTML, And Rendered DOM Secret Scanning
+
+Scans first-party JavaScript files, inline scripts, raw HTML, and browser-rendered DOM for:
 
 - OpenAI-style API keys
 - AWS access keys
@@ -257,341 +186,336 @@ Scans first-party JavaScript files and inline scripts for:
 - JWT-like tokens
 - high-entropy secret assignments
 
-Importance: Frontend JavaScript often becomes a source of accidental credential leakage.
+Confidence: Medium to High depending on token type.
 
-Impact: Exposed secrets can lead to unauthorized API use, cloud abuse, service impersonation, or further compromise.
+Limitations: Pattern and entropy scanning can produce false positives and false negatives. Any live-looking credential should be rotated and manually validated.
 
-Risk: High to Critical.
+### JavaScript Source Maps
+
+Checks discovered first-party JavaScript files for reachable `.map` files.
+
+Confidence: High when a source map is reachable.
+
+Risk: Usually source disclosure rather than direct compromise, but it can expose original code, comments, identifiers, and hidden client-side logic.
+
+### Technology Fingerprinting
+
+Looks for public indicators such as:
+
+- server headers
+- `X-Powered-By`
+- WordPress markers
+- Next.js markers
+- Angular markers
+- React/Vue hints
+- WordPress REST API
+- GraphQL route hints
+
+Confidence: Low to Medium.
+
+Limitations: This is heuristic reconnaissance. It should not be used by itself for CVE claims or patch decisions.
+
+### GraphQL Introspection
+
+Tests common GraphQL paths and discovered GraphQL-like URLs with an introspection query.
+
+Confidence: High when schema metadata is returned.
+
+Limitations: It does not evaluate GraphQL authorization, resolver-level access control, query complexity limits, or business logic.
+
+### API Rate-Limit Probe
+
+Selects one discovered first-party API-like endpoint and sends a small burst of requests, looking for:
+
+- HTTP 429
+- `Retry-After`
+- obvious throttling behavior
+
+Confidence: Low to Medium.
+
+Limitations: This is a tiny abuse-resistance signal, not a brute-force, distributed, or production-grade rate-limit assessment.
+
+### Login Abuse Probe
+
+If an obvious public login form is found, the scanner sends a small number of invalid login attempts and checks for:
+
+- CAPTCHA
+- lockout wording
+- cooldown wording
+- HTTP 429-style throttling
+
+Confidence: Medium when clear protection is observed or clearly absent in the limited probe.
+
+Limitations: It does not prove credential-stuffing resilience. It does not test distributed attacks, account-specific lockouts, MFA quality, password policy, session security, or post-login behavior.
+
+### CSRF Risk Review
+
+Reviews discovered public POST forms for obvious anti-CSRF token hints in hidden inputs.
+
+Confidence: Low to Medium.
+
+Limitations: This is token-presence and workflow-shape analysis only. It does not prove exploitability and does not detect all server-side CSRF defenses.
 
 ### Open Redirect Validation
 
-Tests redirect-style parameters such as:
+Tests redirect-like query parameters and safe GET form flows with an attacker-controlled absolute URL.
 
-- `redirect`
-- `next`
-- `returnUrl`
-- `continue`
-- `destination`
+Confidence: High when the browser lands on the attacker-controlled target.
 
-Importance: A trusted domain that can redirect to attacker-controlled destinations is valuable for phishing and malicious auth-flow chaining.
-
-Impact: Attackers can abuse a legitimate domain to increase trust in phishing links or redirect users to malicious pages.
-
-Risk: Medium to High.
-
-### DOM-Based XSS Validation
-
-Tests whether attacker-controlled URL fragment data is rendered into the DOM by client-side JavaScript.
-
-Importance: DOM-based XSS can happen entirely in frontend code, even when the server never reflects the payload.
-
-Impact: Can lead to browser-side code execution, session theft, phishing overlays, and account takeover chains.
-
-Risk: High to Critical.
+Limitations: Only tests discovered public parameters/forms and a known list of redirect-style names.
 
 ### Reflected XSS Validation
 
-Tests low-risk URL parameters and safe form flows for unsanitized HTML reflection.
+Tests existing query parameters and low-risk forms with unique marker HTML. A finding occurs when the marker appears unsanitized in the DOM/HTML.
 
-Importance: Reflected XSS is one of the most damaging browser-side issues because it executes in the victim's session context.
+Confidence: Medium to High.
 
-Impact: Can lead to session theft, malicious overlays, credential capture, and client-side account takeover chains.
+Limitations: This detects unsafe HTML reflection signals. It does not execute JavaScript payloads or prove every browser exploit chain.
 
-Risk: High to Critical.
+### DOM-Based XSS Validation
+
+Uses URL-fragment marker payloads and checks whether client-side code renders the marker into the DOM.
+
+Confidence: Medium to High when detected.
+
+Limitations: This is a focused fragment-based signal. It does not exhaustively test every DOM sink, source, route, or client-side state.
 
 ### Stored XSS Validation
 
-Tests low-risk forms with a unique payload, then checks whether the payload persists after submission and reload.
+Submits marker HTML into low-risk forms and checks whether the marker persists after submission and reload.
 
-Importance: Stored XSS is often more damaging than reflected XSS because later viewers can be affected without taking a special action.
+Confidence: Medium when detected.
 
-Impact: Can lead to persistent session theft, administrative compromise, malicious content injection, and multi-user impact.
+Limitations: The scanner intentionally avoids risky forms and only tests a small number of low-risk public forms. It does not provide deep stored-XSS coverage across authenticated or complex workflows.
 
-Risk: High to Critical.
+### SQL Injection Signals
 
-### SQL Injection Validation
+Tests low-risk GET parameters and safe search-style forms with conservative SQL payloads and checks for:
 
-Tests low-risk GET parameters and safe search-style forms with conservative SQL payloads, then checks for:
+- database error patterns
+- SQL/database exception wording
+- strong response-length anomalies
+- navigation errors that suggest backend SQL/database failure
 
-- database error messages
-- SQL exception patterns
-- strong response anomalies
+Confidence: Medium when database errors are observed; lower when only response anomalies are observed.
 
-Importance: SQL injection remains one of the highest-impact application vulnerabilities.
-
-Impact: A confirmed issue could expose, modify, or destroy data and may lead to authentication bypass or broader compromise.
-
-Risk: High to Critical.
+Limitations: This is not full SQL injection exploitation. It does not dump data, infer boolean/time-based injection deeply, bypass WAFs, or prove exploitability beyond the observed signal.
 
 ### Path Traversal Validation
 
-Tests low-risk query parameters such as file, path, template, or download-style inputs with conservative traversal payloads.
+Tests file/path/download-style query parameters with conservative traversal payloads and looks for strong file-read evidence such as:
 
-Importance: File-oriented parameters are a common place for unsafe path joining and normalization mistakes.
+- `/etc/passwd` markers
+- Windows `win.ini` markers
 
-Impact: Successful traversal can expose local files such as system configuration, credentials, source code, and application secrets.
+Confidence: High when evidence is detected.
 
-Risk: High.
+Limitations: Only tests discovered query parameters and a small payload list.
 
-### API Version Exposure Checks
+### HTTP Response Splitting
 
-Checks discovered versioned API-style endpoints for sibling public versions such as `v1`, `v2`, `v3`, or `beta`.
+Injects CRLF into selected query parameters and checks whether a custom response header appears.
 
-Importance: Older or parallel API versions often drift away from current authorization, validation, and abuse controls.
+Confidence: High when the injected header is observed.
 
-Impact: Reachable legacy versions can silently expand attack surface even when the main UI uses a newer API.
+Limitations: Only tests discovered/relevant public parameters.
 
-Risk: Low to Medium.
+### Directory Listing
 
-### JavaScript Source Map Checks
+Requests directory candidates derived from crawled URLs and looks for directory index markers such as `Index of /` or `Parent Directory`.
 
-Tests whether production JavaScript source maps are publicly accessible.
+Confidence: High when markers are found.
 
-Importance: Source maps can reveal original code, comments, identifiers, and internal implementation detail.
+Limitations: Only candidate directories derived from crawled pages are tested.
 
-Impact: Attackers can use source maps to understand application behavior and hidden client-side logic faster.
+### Forced Browsing
 
-Risk: Low to Medium.
+Requests a short configured list of internal-looking paths such as:
 
-### Directory Listing Checks
+- `/admin`
+- `/dashboard`
+- `/internal`
+- `/debug`
+- `/api/docs`
+- `/swagger`
+- `/actuator`
+- `/graphql`
 
-Tests whether the web server exposes directory index pages.
+Confidence: Medium.
 
-Importance: Directory indexes can reveal forgotten files, asset structure, or sensitive artifacts.
+Limitations: A reachable route is not automatically sensitive. Manual context is required.
 
-Impact: Even when the files themselves are not obviously dangerous, the listing helps attackers map what exists.
+### Verbose Error Leakage
 
-Risk: Low to Medium.
-
-### Forced Browsing Checks
-
-Tests common internal-style and administrative-looking paths for direct unauthenticated access.
-
-Importance: Some routes are not linked in the interface but are still reachable directly.
-
-Impact: Can reveal exposed internal tools, documentation, consoles, or weakly protected routes.
-
-Risk: Low to Medium.
-
-### Verbose Error Checks
-
-Probes error responses for:
+Requests likely error paths and malformed query input, then looks for:
 
 - stack traces
-- SQL exception text
-- framework exception messages
-- filesystem or code path leakage
+- exception text
+- SQL errors
+- framework/debug output
+- filesystem/code path clues
 
-Importance: Detailed error output often helps attackers refine payloads and fingerprint the stack.
+Confidence: Medium to High when explicit error text is found.
 
-Impact: Information leakage makes exploitation easier even if it is not the root vulnerability itself.
-
-Risk: Low to Medium.
-
-### Sensitive Path Probing
-
-Checks common exposed paths such as:
-
-- `.env`
-- `.git/config`
-- backup files
-- Swagger/OpenAPI files
-- admin paths
-- config files
-- server status/debug paths
-
-Importance: Exposed internal files can leak secrets, infrastructure details, or admin functionality.
-
-Impact: A successful finding can lead to credential leakage, source exposure, or direct system compromise.
-
-Risk: Medium to Critical.
+Limitations: Only a small number of probes are sent.
 
 ### Open Port Checks
 
-Performs a lightweight TCP connect scan against a short list of common public ports.
+Performs TCP connect checks against a short list of common public ports such as:
 
-Importance: Public websites sometimes expose administrative, development, or datastore services alongside the main web origin.
+- 21, 22, 80, 443
+- 3000, 5000, 8000, 8080, 8443
+- 3306, 5432, 6379, 9200, 27017
 
-Impact: Extra public ports can reveal management interfaces, alternate apps, or databases that were never meant to be internet-facing.
+Confidence: High for the tested hostname and port list.
 
-Risk: Low to Medium.
+Limitations: This is not a full network scan.
 
-### DNSSEC Checks
+### DNSSEC
 
-Checks whether the public domain appears to publish DNSKEY records.
+Checks whether the apparent base domain publishes DNSKEY records.
 
-Importance: DNSSEC improves trust in DNS responses by adding authenticity signals at the zone level.
+Confidence: Medium.
 
-Impact: Missing DNSSEC is not always a direct vulnerability, but it does represent weaker DNS hardening for production-facing properties.
+Limitations: Base-domain extraction is best effort. Some public suffix cases may need manual review.
 
-Risk: Low.
+### Domain Posture
 
-### HTTP Response Splitting Validation
+Checks best-effort passive domain posture:
 
-Tests whether CRLF input in low-risk query parameters can inject unexpected response headers.
+- registration age via RDAP
+- parking markers in homepage content
 
-Importance: Header-injection flaws can affect browsers, proxies, caches, and downstream security controls.
+Confidence: Low to Medium.
 
-Impact: Successful response splitting can support cache poisoning, redirect manipulation, cookie confusion, or header-based abuse.
+Limitations: This is context for triage, not a vulnerability by itself.
 
-Risk: High.
+### Certificate Transparency
 
-### Domain Age and Parking Posture Checks
+Queries certificate transparency records for the apparent base domain and extracts observed subdomains.
 
-Uses passive public signals such as:
+Confidence: Medium when records are retrieved.
 
-- recent domain registration age
-- parking-related homepage content
-
-Importance: Domain posture helps defenders triage whether an internet-facing property looks mature, intentionally live, or still in a parked state.
-
-Impact: Very new or parked domains deserve extra validation before they are treated as stable production assets.
-
-Risk: Low.
-
-### Certificate Transparency Monitoring
-
-Pulls public certificate transparency records for the target domain and extracts observed subdomains from issued certificates.
-
-Importance: CT data often reveals public-facing assets that are not obvious from the main website crawl.
-
-Impact: Helps defenders inventory shadow assets, staging systems, and certificate-linked subdomain growth.
-
-Risk: Informational to Medium.
+Limitations: Depends on public CT query availability and best-effort base-domain extraction.
 
 ### New Subdomain Alerts
 
-Compares the current CT-discovered subdomain set against the last locally saved baseline.
+Compares current CT-discovered subdomains with the previous local baseline.
 
-Importance: New public subdomains often appear before they have gone through the same hardening and review process as the main site.
+Confidence: Medium.
 
-Impact: Highlights public attack-surface drift at the DNS and certificate layer.
+Limitations: Only useful after at least one prior baseline exists.
 
-Risk: Low to Medium.
+### Subdomain Takeover Fingerprints
 
-### Subdomain Takeover Checks
+Tests a limited number of CT-discovered subdomains for common dangling-hosting fingerprints, including providers such as GitHub Pages, Heroku, S3, and Azure App Service.
 
-Tests a limited set of CT-discovered subdomains for common dangling-hosting fingerprints such as unclaimed GitHub Pages, Heroku, S3, or Azure endpoints.
+Confidence: Medium when CNAME and body fingerprint align.
 
-Importance: Abandoned DNS mappings can let attackers host content on a trusted domain.
-
-Impact: Takeover-prone subdomains can support phishing, impersonation, and trust abuse under the victim domain.
-
-Risk: High.
-
-### SSL Certificate Expiry Monitor
-
-Tracks the current certificate against a configurable renewal threshold and saves the latest baseline for future comparison.
-
-Importance: Expiring certificates can break user trust and cause avoidable incidents if they are only noticed at the last moment.
-
-Impact: Gives earlier warning than a one-time expiry check alone.
-
-Risk: Low to Medium.
-
-### Security Header Regression Alerts
-
-Compares the current response header posture against the previous saved baseline.
-
-Importance: Teams sometimes remove or break security headers during CDN, reverse-proxy, or framework changes without noticing immediately.
-
-Impact: Detects silent hardening regressions instead of only reporting the current moment in isolation.
-
-Risk: Medium.
-
-### Exposed Asset Drift Detection
-
-Compares the currently discovered public pages and captured API calls with the previous baseline.
-
-Importance: Public attack surface changes over time, and new routes may bypass the normal review path.
-
-Impact: Highlights new or missing public assets that may deserve manual review.
-
-Risk: Low to Medium.
+Limitations: This is fingerprint-based and does not claim or exploit the subdomain.
 
 ### Passive Host Intelligence
 
-Queries public passive host intelligence for the resolved public IP address and reviews:
+Resolves the target hostname to an IP address and queries Shodan InternetDB for:
 
 - observed ports
 - hostnames
-- passive tags
-- published vulnerability hints
+- CPEs
+- tags
+- vulnerability identifiers
 
-Importance: Attackers use passive internet data sources during reconnaissance, so defenders benefit from seeing the same broad picture.
+It also calculates a basic exposure score from observed ports, vulnerability hints, risky ports, and risky tags.
 
-Impact: Helps reveal exposure that may not be obvious from the main page crawl alone.
+Confidence: Low to Medium.
 
-Risk: Low to Medium.
+Limitations: Passive data may be stale, incomplete, or unavailable. Treat as enrichment, not definitive proof.
 
-### Passive IP Reputation Heuristics
+### Domain Credential Leak Catalog
 
-Builds a lightweight reputation-style signal from passively observed risky ports, tags, and vulnerabilities.
+Checks XposedOrNot public breach catalog data for breach records linked to the scanned domain.
 
-Importance: Not every public IP with extra exposure is critical, but clustered passive signals usually deserve closer review.
+Confidence: Low to Medium.
 
-Impact: Helps triage which hosts look noisier or riskier from the outside.
+Limitations: It checks public breach records by domain. It does not search every possible leaked employee credential or private breach dataset.
 
-Risk: Low to Medium.
+### Baseline Monitoring
 
-### Domain Credential Leak Checks
+Stores and compares local scan baselines for:
 
-Checks public breach-catalog data for breach records linked to the scanned domain.
+- SSL expiry
+- security header regression
+- public page drift
+- API call drift
+- CT subdomain drift
 
-Importance: Domain-linked breach history increases credential reuse, phishing, and password-spraying pressure against people associated with that domain.
+Confidence: Medium to High after repeated scans.
 
-Impact: Helps teams understand when public breach history should raise the urgency of login hardening and credential defenses.
+Limitations: First scan creates the baseline. Meaningful drift detection starts on later scans.
 
-Risk: Medium.
+### Report Generation
 
-### Exposure Scoring
+Generates:
 
-Calculates a simple passive exposure score from public host-intelligence signals such as:
+- raw JSON
+- readable JSON
+- text reports
+- backend-owned PDF reports
 
-- number of observed ports
-- risky port types
-- passive vulnerability hints
-- risky public tags
+The report layer turns raw scan output into findings with impact, confidence, evidence, and remediation language.
 
-Importance: A single summarized score helps triage broad public footprint risk without replacing the underlying evidence.
+## What The Scanner Does Not Fully Cover Yet
 
-Impact: Makes passive exposure easier to compare between repeated scans.
+These are explicit current gaps:
 
-Risk: Low to Medium.
+- authenticated workflow scanning
+- role-based access-control testing
+- IDOR/BOLA detection
+- privilege escalation testing
+- business logic testing
+- deep session management review
+- complete CSRF exploit validation
+- deep stored-XSS coverage across complex workflows
+- deeper SQL injection confirmation, boolean/time-based testing, and exploitation
+- SSRF validation
+- XXE validation
+- file upload abuse validation
+- library/CVE correlation
+- distributed or production-grade abuse/rate-limit testing
+- full network inventory
 
-### CORS Security Analysis
+## Product Positioning
 
-Checks for wildcard origins, credential misuse, origin reflection, null origin trust, and risky third-party trust.
+Good wording:
 
-Importance: CORS controls which websites can read browser-based API responses.
+- automated public website security assessment
+- public attack-surface scanner
+- exposure and misconfiguration scanner
+- evidence-based vulnerability signals
+- initial active validation
+- manual validation recommended for critical active findings
 
-Impact: Misconfigured CORS can allow malicious websites to read sensitive user data.
+Avoid wording:
 
-Risk: Medium to Critical.
+- guaranteed security scan
+- complete penetration test replacement
+- full exploit confirmation
+- proves the site is secure
+- complete authenticated application assessment
 
-## Current Position
+## Practical Interpretation
 
-The scanner currently provides strong coverage for:
+If a high-confidence exposure finding appears, such as a readable `.env`, exposed source map, weak cookie flag, missing critical header, or live secret, treat it as actionable.
 
-- Attack surface mapping
-- Security misconfiguration detection
-- Information disclosure checks
-- Frontend secret exposure checks
-- HTTP method and TRACE checks
-- Technology fingerprinting
-- GraphQL introspection checks
-- API throttling checks
-- CSRF risk detection
-- Redirect validation
-- DOM-based XSS validation
-- Reflected XSS validation
-- Stored XSS validation
-- Initial SQL injection heuristics
-- Source map checks
-- Directory listing checks
-- Forced browsing checks
-- Verbose error checks
-- Browser and API discovery
-- Developer-readable reporting
+If an active validation finding appears, such as XSS, SQLi, open redirect, or login abuse, treat it as a meaningful security signal and manually reproduce before making final exploitability claims.
 
-The next major improvement area is deeper authenticated validation, stronger exploit confirmation logic, SSRF and access-control testing, and technology/CVE correlation.
+If no findings appear, interpret the result as:
+
+```text
+No issue was detected in the tested public scope.
+```
+
+Do not interpret it as:
+
+```text
+The website is secure.
+```

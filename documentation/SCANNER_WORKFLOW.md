@@ -8,7 +8,7 @@
 4. Load the target page.
 5. Crawl internal links within configured depth and page limits.
 6. Collect forms, inputs, buttons, and links.
-7. Run low-risk active validation checks such as open redirect, DOM-based XSS, reflected XSS, stored XSS, and SQL injection heuristics.
+7. Run low-risk active validation signals such as open redirect, DOM-based XSS, reflected XSS, stored XSS, and SQL injection error/anomaly heuristics.
 8. Interact with safe form fields and buttons.
 9. Capture frontend-triggered API calls.
 10. Run protocol and exposure checks such as HTTP method review, verbose error checks, source maps, directory listing, and forced browsing.
@@ -46,9 +46,9 @@ The backend currently checks:
 - Forced browsing: direct access to common unlinked internal or administrative paths.
 - Verbose errors: stack traces, SQL errors, and framework exception leakage.
 - Open redirects: redirect-style parameters and safe GET redirect flows.
-- DOM-based XSS: client-side rendering of attacker-controlled fragment input.
-- Reflected XSS: unsanitized HTML reflection in low-risk URL parameters and safe forms.
-- Stored XSS: payload persistence after low-risk form submission and reload.
+- DOM-based XSS: marker-based detection of client-side rendering of attacker-controlled fragment input.
+- Reflected XSS: marker-based detection of unsanitized HTML reflection in low-risk URL parameters and safe forms.
+- Stored XSS: marker persistence after low-risk public form submission and reload.
 - SQL injection: database error leakage and strong response anomalies in low-risk GET-style flows.
 - Sensitive paths: exposed env files, Git metadata, backups, Swagger/OpenAPI files, admin paths, and config files.
 - CORS: wildcard origins, origin reflection, null origin, credentials issues, and risky trusted origins.
@@ -81,7 +81,7 @@ The current scanner now performs an initial active validation layer, but still h
 
 - authenticated workflow testing
 - deeper authorization and object-level access testing
-- stored XSS testing
+- deeper stored XSS testing across complex or authenticated workflows
 - stronger SQL injection confirmation logic
 - SSRF and XXE validation
 - library and CVE detection

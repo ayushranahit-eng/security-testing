@@ -2,7 +2,7 @@
 
 ## What This Repository Does
 
-This project is an automated web security scanner. It crawls a target website, discovers pages and frontend elements, captures API calls triggered by browser interaction, and runs common security checks.
+This project is an automated public-scope web security scanner. It crawls a target website, discovers pages and frontend elements, captures API calls triggered by browser interaction, and runs exposure, misconfiguration, and initial active-validation checks.
 
 The current backend is a FastAPI service powered by Playwright.
 
@@ -37,8 +37,8 @@ The current backend is a FastAPI service powered by Playwright.
 - Tests redirect-style parameters for open redirect behavior.
 - Tests client-side fragment handling for DOM-based XSS behavior.
 - Tests low-risk parameters and forms for reflected XSS behavior.
-- Tests low-risk forms for stored XSS persistence behavior.
-- Tests low-risk parameters and safe form flows for SQL injection signals.
+- Tests low-risk public forms for stored XSS persistence signals.
+- Tests low-risk parameters and safe form flows for SQL injection error/anomaly signals.
 - Checks required security headers.
 - Reviews cookie security flags.
 - Validates SSL/TLS certificate status and checks for weak TLS protocol or cipher support.
@@ -71,4 +71,6 @@ security-testing/
 
 ## Current Stage
 
-The scanner now covers reconnaissance, security misconfiguration detection, exposure checks, transport-layer hardening checks, and an initial active validation layer. The next high-value additions would be stronger authenticated testing, deeper access-control checks, SSRF-style validation, stronger SQLi confirmation logic, and library/CVE correlation.
+The scanner now covers public attack-surface reconnaissance, security misconfiguration detection, exposure checks, transport-layer hardening checks, passive domain/host enrichment, and an initial active-validation layer for selected web vulnerability classes. It should be treated as a strong automated assessment and triage tool, not as a full penetration test replacement.
+
+The next high-value additions would be authenticated testing, deeper access-control checks, SSRF-style validation, stronger SQLi confirmation logic, file upload abuse checks, and library/CVE correlation.
