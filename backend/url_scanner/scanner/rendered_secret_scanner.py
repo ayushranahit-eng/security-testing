@@ -8,7 +8,7 @@ secret scanning.
 
 from urllib.parse import urlparse
 
-from scanner.javascript_secret_scanner import (
+from url_scanner.scanner.javascript_secret_scanner import (
     _dedupe_detections,
     _find_secrets_in_text,
     _first_party_pages,

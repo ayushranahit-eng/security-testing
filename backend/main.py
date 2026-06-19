@@ -23,15 +23,16 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from models        import ScanRequest
+from url_scanner.models import ScanRequest
 from config        import DEFAULT_CONFIG
 from core.engine   import run_scan
 from core.pdf_report import build_pdf_filename, render_pdf_report_sync
 from core.reporter import generate_text_report, generate_readable_json
-from scanner.cookies import analyse_cookies
-from scanner.headers import check_headers
-from scanner.ssl_check import check_ssl, evaluate_ssl
-import db as mongo
+from url_scanner.scanner.cookies import analyse_cookies
+from url_scanner.scanner.headers import check_headers
+from url_scanner.scanner.ssl_check import check_ssl, evaluate_ssl
+import supabase_db as supabase
+from ssh_scanner import server as deep_scan_server
 
 app = FastAPI(
     title="Security Scanner API",
@@ -45,18 +46,18 @@ SCAN_LOCK = threading.Lock()
 
 @app.on_event("startup")
 def startup_event():
-    if not mongo.mongo_enabled():
+    if not supabase.enabled():
         return
     try:
-        mongo.init_mongo()
-        print("MongoDB persistence enabled")
+        supabase.init_supabase()
+        print("Supabase persistence enabled")
     except Exception as exc:
-        print(f"MongoDB persistence disabled: {exc}")
+        print(f"Supabase persistence disabled: {exc}")
 
 
 @app.on_event("shutdown")
 def shutdown_event():
-    mongo.close_mongo()
+    supabase.close_supabase()
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,6 +79,8 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
+
+app.mount("/deep-scan", deep_scan_server.app)
 
 
 def _build_cfg(req: ScanRequest) -> dict:
@@ -120,7 +123,7 @@ def _public_job(scan_id: str) -> dict:
 
 
 def _update_job(scan_id: str, **updates) -> None:
-    mongo_event = updates.get("event")
+    persistence_event = updates.get("event")
     with SCAN_LOCK:
         job = SCAN_JOBS.get(scan_id)
         if job is not None:
@@ -133,17 +136,17 @@ def _update_job(scan_id: str, **updates) -> None:
                 events.append(event)
                 job["event_count"] = len(events)
             job["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    _persist_scan_update(scan_id, updates, mongo_event)
+    _persist_scan_update(scan_id, updates, persistence_event)
 
 
 def _persist_scan_update(scan_id: str, updates: dict, event: dict | None = None) -> None:
-    if not mongo.mongo_enabled():
+    if not supabase.enabled():
         return
     try:
-        if mongo.is_ready():
-            mongo.update_scan(scan_id, updates, event=event)
+        if supabase.is_ready():
+            supabase.update_scan(scan_id, updates, event=event)
     except Exception as exc:
-        print(f"MongoDB scan update skipped for {scan_id}: {exc}")
+        print(f"Supabase scan update skipped for {scan_id}: {exc}")
 
 
 async def _run_background_scan(scan_id: str, req: ScanRequest) -> None:
@@ -184,12 +187,12 @@ async def _run_background_scan(scan_id: str, req: ScanRequest) -> None:
                     "message": "Scan completed",
                 })
                 job["event_count"] = len(events)
-        if mongo.mongo_enabled():
+        if supabase.enabled():
             try:
-                if mongo.is_ready():
-                    mongo.complete_scan(scan_id, data)
+                if supabase.is_ready():
+                    supabase.complete_scan(scan_id, data)
             except Exception as exc:
-                print(f"MongoDB scan completion skipped for {scan_id}: {exc}")
+                print(f"Supabase scan completion skipped for {scan_id}: {exc}")
     except Exception as exc:
         traceback.print_exc()
         with SCAN_LOCK:
@@ -217,6 +220,17 @@ def _scan_label(url: str) -> str:
     domain    = urlparse(url).netloc.replace(".", "_")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{domain}_{timestamp}"
+
+
+def _next_scan_id() -> str:
+    next_number = len(SCAN_JOBS) + 1
+    if supabase.enabled():
+        try:
+            if supabase.is_ready():
+                next_number = supabase.next_scan_number()
+        except Exception as exc:
+            print(f"Supabase scan counter skipped: {exc}")
+    return f"SCAN{next_number:07d}"
 
 
 def _parse_iso_timestamp(value: str | None) -> datetime | None:
@@ -502,7 +516,7 @@ def health():
 @app.post("/scan/start", include_in_schema=False)
 async def scan_start(req: ScanRequest):
     """Start a scan in the background. Use the scan_id to poll status."""
-    scan_id = uuid.uuid4().hex
+    scan_id = _next_scan_id()
     now = datetime.now().isoformat(timespec="seconds")
 
     with SCAN_LOCK:
@@ -531,15 +545,52 @@ async def scan_start(req: ScanRequest):
             "finished_at": None,
         }
 
-    if mongo.mongo_enabled():
+    if supabase.enabled():
         try:
-            if mongo.is_ready():
-                mongo.create_scan(scan_id, str(req.url), _build_cfg(req))
+            if supabase.is_ready():
+                supabase.create_scan(scan_id, str(req.url), _build_cfg(req))
         except Exception as exc:
-            print(f"MongoDB scan create skipped for {scan_id}: {exc}")
+            print(f"Supabase scan create skipped for {scan_id}: {exc}")
+            with SCAN_LOCK:
+                job = SCAN_JOBS.get(scan_id)
+                if job is not None:
+                    job["persistence_error"] = str(exc)
+                    job.setdefault("events", []).append({
+                        "sequence": len(job.setdefault("events", [])) + 1,
+                        "time": datetime.now().isoformat(timespec="seconds"),
+                        "level": "error",
+                        "phase": "persistence",
+                        "message": "Supabase scan create failed",
+                        "error": str(exc),
+                    })
+                    job["event_count"] = len(job["events"])
 
     asyncio.create_task(_run_background_scan(scan_id, req))
     return _public_job(scan_id)
+
+
+@app.get("/debug/supabase", include_in_schema=False)
+def debug_supabase():
+    payload = {
+        "enabled": supabase.enabled(),
+        "ready": False,
+        "url_configured": bool(supabase.SUPABASE_URL),
+        "service_role_key_configured": bool(supabase.SUPABASE_SERVICE_ROLE_KEY),
+        "anon_key_configured": bool(supabase.SUPABASE_ANON_KEY),
+    }
+    if not supabase.enabled():
+        return payload
+    try:
+        payload["ready"] = supabase.is_ready()
+        payload["users_count"] = supabase.count_rows("users")
+        payload["scans_count"] = supabase.count_rows("scans")
+        payload["next_scan_id"] = f"SCAN{supabase.next_scan_number():07d}"
+        user = supabase.get_default_user()
+        payload["default_user_email"] = user.get("email") if user else None
+        payload["default_user_id"] = user.get("id") if user else None
+    except Exception as exc:
+        payload["error"] = str(exc)
+    return payload
 
 
 @app.get("/scan/status/{scan_id}")
@@ -604,7 +655,7 @@ def scan_status(
 
 @app.get("/me")
 def current_user():
-    if not mongo.mongo_enabled() or not mongo.is_ready():
+    if not supabase.enabled() or not supabase.is_ready():
         return {
             "first_name": "Ayush",
             "last_name": "Rana",
@@ -620,22 +671,149 @@ def current_user():
             "persistence": "memory",
         }
 
-    database = mongo.get_db()
-    user = database.users.find_one({"email": mongo.DEFAULT_USER_EMAIL})
-    plan = database.account_plans.find_one({"_id": user.get("account_plan_id")}) if user else None
-    scans_used = database.scans.count_documents({"user_id": user["_id"]}) if user else 0
-    scans_available = int((plan or {}).get("no_of_scans_available", 0) or 0)
-    payload = mongo.serialize_doc(user) or {}
-    payload["account_plan"] = mongo.serialize_doc(plan)
-    payload["scans_used"] = scans_used
-    payload["scans_left"] = max(0, scans_available - scans_used)
-    payload["persistence"] = "mongodb"
-    return payload
+    return supabase.current_user_payload()
+
+
+def _deep_scan_sessions(limit: int = 100, include_report: bool = False) -> list[dict]:
+    sessions: list[dict] = []
+    collection = deep_scan_server.deep_scan_collection()
+    if collection is not None:
+        projection = None if include_report else {"report_blob": 0}
+        docs = collection.find({}, projection).sort("updated_at", -1).limit(limit)
+        for doc in docs:
+            session = deep_scan_server.session_from_mongo_doc(doc)
+            if session:
+                sessions.append(session)
+        return sessions
+
+    scans_dir = deep_scan_server.SCANS_DIR
+    if not scans_dir.exists():
+        return []
+    for path in sorted(scans_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)[:limit]:
+        session = deep_scan_server.load_json_file(path, None)
+        if isinstance(session, dict):
+            sessions.append(session)
+    return sessions
+
+
+def _deep_scan_summary(session: dict) -> dict:
+    report = session.get("report") or {}
+    return (
+        report.get("summary")
+        or (session.get("report_summary") or {}).get("summary")
+        or {}
+    )
+
+
+def _deep_scan_domain(session: dict) -> str:
+    target = session.get("website_url") or (session.get("report_summary") or {}).get("root") or ""
+    if not target:
+        return "codebase"
+    parsed = urlparse(str(target))
+    return (parsed.netloc or parsed.path or str(target)).strip("/") or "codebase"
+
+
+def _public_deep_scan(session: dict) -> dict:
+    summary = _deep_scan_summary(session)
+    return {
+        "scan_id": session.get("id"),
+        "id": session.get("id"),
+        "url": session.get("website_url") or (session.get("report_summary") or {}).get("root"),
+        "domain": _deep_scan_domain(session),
+        "status": session.get("status", "unknown"),
+        "created_at": session.get("created_at"),
+        "updated_at": session.get("updated_at"),
+        "completed_at": session.get("updated_at") if session.get("status") == "completed" else None,
+        "summary": {
+            "findings": int(summary.get("total", 0) or 0),
+            "severity_counts": {
+                "critical": int(summary.get("critical", 0) or 0),
+                "high": int(summary.get("high", 0) or 0),
+                "medium": int(summary.get("medium", 0) or 0),
+                "low": int(summary.get("low", 0) or 0),
+                "info": int(summary.get("info", 0) or 0),
+            },
+        },
+        "scan_source": "deep_scan",
+        "scanned_from": "Deep Scan",
+    }
+
+
+def _deep_scan_findings(limit: int = 200) -> list[dict]:
+    rows: list[dict] = []
+    for session in _deep_scan_sessions(limit=limit, include_report=True):
+        report = session.get("report") or {}
+        findings = report.get("findings") or []
+        domain = _deep_scan_domain(session)
+        target = session.get("website_url") or report.get("root") or domain
+        for index, finding in enumerate(findings):
+            rows.append({
+                "id": f"{session.get('id')}-{index}",
+                "scan_id": session.get("id"),
+                "domain": domain,
+                "url": target,
+                "vulnerability_name": finding.get("title") or finding.get("vulnerability") or "Security finding",
+                "severity": str(finding.get("severity") or "info").lower(),
+                "status": "open",
+                "description": finding.get("description") or finding.get("note") or "",
+                "evidence": {
+                    "tool": finding.get("tool"),
+                    "category": finding.get("category"),
+                    "file": finding.get("file"),
+                    "line": finding.get("line"),
+                    "evidence": finding.get("evidence"),
+                },
+                "remediation": finding.get("remediation") or "",
+                "raw": finding,
+                "created_at": report.get("generated_at") or session.get("updated_at") or session.get("created_at"),
+                "scan_source": "deep_scan",
+                "scanned_from": "Deep Scan",
+            })
+            if len(rows) >= limit:
+                return rows
+    return rows
+
+
+def _url_scan_memory_findings(limit: int = 200) -> list[dict]:
+    rows: list[dict] = []
+    with SCAN_LOCK:
+        jobs = sorted(
+            SCAN_JOBS.values(),
+            key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+            reverse=True,
+        )
+        for job in jobs:
+            result = job.get("result") or {}
+            findings = result.get("findings") or []
+            target = job.get("target") or result.get("target") or result.get("url") or ""
+            parsed = urlparse(str(target))
+            domain = (parsed.netloc or parsed.path or str(target)).strip("/") or "unknown"
+            for index, finding in enumerate(findings):
+                severity = finding.get("severity") or finding.get("risk") or finding.get("level") or "info"
+                rows.append({
+                    "id": f"{job.get('scan_id')}-{index}",
+                    "scan_id": job.get("scan_id"),
+                    "domain": domain.lower(),
+                    "url": finding.get("url") or target,
+                    "vulnerability_name": finding.get("title") or finding.get("name") or finding.get("type") or "Security finding",
+                    "severity": str(severity).lower(),
+                    "status": "open",
+                    "description": finding.get("description") or finding.get("message") or finding.get("detail") or "",
+                    "evidence": finding.get("evidence") or finding,
+                    "remediation": finding.get("remediation") or finding.get("recommendation") or "",
+                    "raw": finding,
+                    "created_at": job.get("finished_at") or job.get("updated_at") or job.get("created_at"),
+                    "scan_source": "url_scan",
+                    "scanned_from": "URL Scan",
+                })
+                if len(rows) >= limit:
+                    return rows
+    return rows
 
 
 @app.get("/account-plans")
 def account_plans():
-    if not mongo.mongo_enabled() or not mongo.is_ready():
+    if not supabase.enabled() or not supabase.is_ready():
         return [
             {
                 "name": "Basic",
@@ -643,27 +821,67 @@ def account_plans():
                 "persistence": "memory",
             }
         ]
-    database = mongo.get_db()
-    return [mongo.serialize_doc(plan) for plan in database.account_plans.find().sort("no_of_scans_available", 1)]
+    return supabase.list_account_plans()
+
+
+@app.get("/dashboard/summary")
+def dashboard_summary():
+    if supabase.enabled() and supabase.is_ready():
+        return supabase.dashboard_summary()
+    with SCAN_LOCK:
+        jobs = list(SCAN_JOBS.values())
+    completed = [job for job in jobs if job.get("status") == "completed"]
+    failed = [job for job in jobs if job.get("status") == "failed"]
+    processing = [job for job in jobs if job.get("status") not in {"completed", "failed"}]
+    findings_total = sum(int(job.get("findings_found", 0) or 0) for job in completed)
+    return {
+        "scans": {
+            "total": len(jobs),
+            "processing": len(processing),
+            "completed": len(completed),
+            "failed": len(failed),
+            "by_type": {"url_scan": len(jobs), "deep_scan": 0},
+        },
+        "vulnerabilities": {
+            "total": findings_total,
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": findings_total,
+            "info": 0,
+        },
+        "domains": {"total": 0, "items": []},
+        "risk": "Info",
+        "recent_scans": [
+            dict(job, result=None, scan_source="url_scan", scanned_from="URL Scan")
+            for job in sorted(jobs, key=lambda item: item.get("created_at", ""), reverse=True)[:8]
+        ],
+        "recent_vulnerabilities": [],
+        "persistence": "memory",
+    }
 
 
 @app.get("/scans")
 def scans(limit: int = Query(20, ge=1, le=100)):
-    if not mongo.mongo_enabled() or not mongo.is_ready():
+    if not supabase.enabled() or not supabase.is_ready():
+        deep_rows = [_public_deep_scan(session) for session in _deep_scan_sessions(limit=limit)]
         with SCAN_LOCK:
             jobs = sorted(
                 SCAN_JOBS.values(),
                 key=lambda item: item.get("created_at", ""),
                 reverse=True,
             )[:limit]
-            return [dict(job, result=None) for job in jobs]
+            url_rows = [
+                dict(job, result=None, scan_source="url_scan", scanned_from="URL Scan")
+                for job in jobs
+            ]
+        return sorted(
+            url_rows + deep_rows,
+            key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+            reverse=True,
+        )[:limit]
 
-    database = mongo.get_db()
-    docs = database.scans.find(
-        {},
-        {"raw_result": 0},
-    ).sort("created_at", -1).limit(limit)
-    return [mongo.serialize_doc(doc) for doc in docs]
+    return supabase.list_scans(limit=limit)
 
 
 @app.get("/findings")
@@ -671,22 +889,80 @@ def findings(
     status: str | None = None,
     severity: str | None = None,
     domain: str | None = None,
-    limit: int = Query(50, ge=1, le=200),
+    scan_type: str | None = None,
+    search: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=50),
+    limit: int | None = Query(None, ge=1, le=200),
 ):
-    if not mongo.mongo_enabled() or not mongo.is_ready():
-        return []
+    effective_size = limit or page_size
+    skip = 0 if limit else (page - 1) * effective_size
+    normalized_type = (scan_type or "").lower()
+    include_url = normalized_type in {"", "all", "url_scan"}
+    include_deep = normalized_type in {"", "all", "deep_scan"}
 
-    query = {}
-    if status:
-        query["status"] = status.lower()
-    if severity:
-        query["severity"] = severity.lower()
-    if domain:
-        query["domain"] = domain.lower()
+    def row_matches(item: dict) -> bool:
+        if status and str(item.get("status", "")).lower() != status.lower():
+            return False
+        if severity and str(item.get("severity", "")).lower() != severity.lower():
+            return False
+        if domain and str(item.get("domain", "")).lower() != domain.lower():
+            return False
+        if search:
+            needle = search.lower()
+            haystack = " ".join(str(item.get(key) or "") for key in (
+                "vulnerability_name",
+                "description",
+                "domain",
+                "url",
+                "scan_id",
+                "scanned_from",
+            )).lower()
+            return needle in haystack
+        return True
 
-    database = mongo.get_db()
-    docs = database.findings.find(query).sort("created_at", -1).limit(limit)
-    return [mongo.serialize_doc(doc) for doc in docs]
+    if not supabase.enabled() or not supabase.is_ready():
+        deep_source = _deep_scan_findings(limit=min(200, skip + effective_size)) if include_deep else []
+        deep_source = sorted(
+            [item for item in deep_source if row_matches(item)],
+            key=lambda item: item.get("created_at") or "",
+            reverse=True,
+        )
+        deep_rows = deep_source[:effective_size] if limit else deep_source[skip:skip + effective_size]
+        url_rows = _url_scan_memory_findings(limit=min(200, skip + effective_size)) if include_url else []
+        combined = [item for item in url_rows + deep_rows if row_matches(item)]
+        combined = sorted(combined, key=lambda item: item.get("created_at") or "", reverse=True)
+        items = combined[:effective_size] if limit else combined[skip:skip + effective_size]
+        return {
+            "items": items,
+            "total": len(combined),
+            "page": page,
+            "page_size": effective_size,
+            "has_next": (skip + effective_size) < len(combined),
+        }
+
+    url_rows = []
+    url_total = 0
+    if include_url or include_deep:
+        selected_scan_type = None if include_url and include_deep else ("url_scan" if include_url else "deep_scan")
+        url_rows, url_total = supabase.list_vulnerabilities(
+            status=status,
+            severity=severity,
+            domain=domain,
+            scan_type=selected_scan_type,
+            search=search,
+            page=page,
+            page_size=effective_size,
+        )
+    combined = url_rows
+    total = url_total
+    return {
+        "items": combined,
+        "total": total,
+        "page": page,
+        "page_size": effective_size,
+        "has_next": (skip + effective_size) < total,
+    }
 
 
 @app.get("/scan/result/{scan_id}", include_in_schema=False)

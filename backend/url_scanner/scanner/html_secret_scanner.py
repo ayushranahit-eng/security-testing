@@ -6,7 +6,7 @@ Scans raw HTML responses for exposed keys, tokens, and high-entropy secrets.
 
 from urllib.parse import urlparse
 
-from scanner.javascript_secret_scanner import (
+from url_scanner.scanner.javascript_secret_scanner import (
     _dedupe_detections,
     _download_text,
     _find_secrets_in_text,

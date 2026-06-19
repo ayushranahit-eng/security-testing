@@ -602,6 +602,314 @@ h2 {
   grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.9fr);
 }
 
+.deep-launch {
+  grid-template-columns: auto minmax(0, 1fr) minmax(260px, 360px) auto;
+}
+
+.deep-url-field {
+  min-width: 0;
+}
+
+.deep-url-field input {
+  width: 100%;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 12px;
+  color: var(--ink);
+  background: #ffffff;
+  outline: 0;
+}
+
+.deep-command-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.deep-command-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.deep-command-tabs button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #34424a;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.deep-command-tabs button.active,
+.deep-command-tabs button:hover {
+  border-color: #9ed1ce;
+  color: var(--teal-dark);
+  background: var(--mint);
+}
+
+.deep-command-output {
+  min-height: 132px;
+}
+
+.deep-command-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.deep-command-fallback {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.deep-command-fallback summary {
+  cursor: pointer;
+  color: #34424a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.deep-command-fallback .secondary-action {
+  margin: 12px 0;
+}
+
+.deep-command-fallback .monitor-script {
+  min-height: 178px;
+}
+
+.deep-session-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.deep-session-strip span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  color: #34424a;
+  background: #fbfcfd;
+  font-size: 12px;
+}
+
+.deep-session-strip strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.deep-timeline {
+  display: grid;
+  gap: 10px;
+  max-height: 330px;
+  overflow: auto;
+}
+
+.deep-event {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 11px 12px;
+  background: #fbfcfd;
+}
+
+.deep-event svg {
+  color: var(--teal);
+}
+
+.deep-event.failed svg,
+.deep-event.error svg {
+  color: var(--red);
+}
+
+.deep-event strong,
+.deep-event span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.deep-event strong {
+  margin-bottom: 3px;
+}
+
+.deep-event span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.deep-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.deep-summary-grid div {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.deep-summary-grid span,
+.deep-report-meta {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.deep-summary-grid strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 26px;
+}
+
+.deep-summary-grid .critical,
+.deep-summary-grid .high {
+  border-color: #efb7b2;
+  background: #fff5f4;
+}
+
+.deep-summary-grid .critical strong,
+.deep-summary-grid .high strong {
+  color: var(--red);
+}
+
+.deep-summary-grid .medium {
+  border-color: #ecd08d;
+  background: #fff9eb;
+}
+
+.deep-summary-grid .medium strong {
+  color: var(--amber);
+}
+
+.deep-summary-grid .low {
+  border-color: #afd8bd;
+  background: #f1fbf4;
+}
+
+.deep-summary-grid .low strong {
+  color: var(--green);
+}
+
+.deep-report-meta {
+  margin-top: 12px;
+  line-height: 1.45;
+}
+
+.deep-report-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.deep-inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.deep-inventory-grid div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 13px;
+  background: #fbfcfd;
+}
+
+.deep-inventory-grid strong,
+.deep-inventory-grid span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.deep-inventory-grid strong {
+  margin-bottom: 8px;
+}
+
+.deep-inventory-grid span {
+  color: #34424a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.deep-findings-list {
+  display: grid;
+  gap: 10px;
+}
+
+.deep-finding {
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: #ffffff;
+}
+
+.deep-finding > span {
+  justify-self: start;
+  align-self: start;
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: #34424a;
+  background: #eef2f4;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: capitalize;
+}
+
+.deep-finding.critical > span,
+.deep-finding.high > span {
+  color: var(--red);
+  background: #fff1f0;
+}
+
+.deep-finding.medium > span {
+  color: var(--amber);
+  background: #fff8e8;
+}
+
+.deep-finding.low > span {
+  color: var(--green);
+  background: #f1fbf4;
+}
+
+.deep-finding strong,
+.deep-finding small,
+.deep-finding p {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.deep-finding small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.deep-finding p {
+  margin: 8px 0 0;
+  color: #34424a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .monitoring-panel {
   min-height: 286px;
 }
@@ -893,28 +1201,33 @@ h2 {
 
 .vulnerability-filters {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 170px 170px 210px;
+  grid-template-columns: minmax(260px, 1fr) 150px 150px minmax(170px, 0.65fr) 150px;
   gap: 12px;
   align-items: end;
 }
 
 .vulnerability-filters label {
   min-width: 0;
+  color: #53636b;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .vulnerability-filters select {
   width: 100%;
-  height: 42px;
+  height: 40px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 0 10px;
   color: var(--ink);
   background: #fbfcfd;
+  font-size: 13px;
+  font-weight: 800;
   outline: 0;
 }
 
 .filter-search {
-  height: 42px;
+  height: 40px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -932,6 +1245,8 @@ h2 {
   outline: 0;
   color: var(--ink);
   background: transparent;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .severity-strip {
@@ -980,9 +1295,9 @@ h2 {
 .vulnerability-table-head,
 .vulnerability-row {
   display: grid;
-  grid-template-columns: 112px minmax(220px, 1.3fr) minmax(150px, 0.8fr) 130px minmax(130px, 0.7fr) 170px;
+  grid-template-columns: 104px minmax(230px, 1.35fr) minmax(132px, 0.75fr) 112px 118px minmax(116px, 0.6fr) 152px;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .vulnerability-table-head {
@@ -991,8 +1306,10 @@ h2 {
   padding: 0 14px;
   color: var(--muted);
   background: var(--panel-soft);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .vulnerability-row-wrap {
@@ -1010,6 +1327,7 @@ h2 {
   padding: 0 14px;
   color: var(--ink);
   background: #ffffff;
+  font-size: 13px;
   text-align: left;
 }
 
@@ -1026,7 +1344,16 @@ h2 {
 
 .vulnerability-row code {
   color: #53636b;
-  font-size: 12px;
+  font-size: 11px;
+}
+
+.vulnerability-row strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.vulnerability-row span {
+  color: #53636b;
 }
 
 .severity-badge,
@@ -1036,9 +1363,44 @@ h2 {
   padding: 5px 9px;
   color: #34424a;
   background: #eef2f4;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 900;
   text-transform: capitalize;
+}
+
+.vulnerability-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: #fbfcfd;
+}
+
+.vulnerability-pagination > span,
+.vulnerability-pagination strong {
+  color: #53636b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.vulnerability-pagination div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vulnerability-pagination .secondary-action {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.vulnerability-pagination .secondary-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .vulnerability-row-wrap.critical .severity-badge,
@@ -1108,6 +1470,10 @@ h2 {
   background: #fbfcfd;
 }
 
+.module-guide-top {
+  margin-top: 0;
+}
+
 .guide-steps {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1163,6 +1529,40 @@ h2 {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.recent-vulnerability-list {
+  display: grid;
+  gap: 10px;
+}
+
+.recent-vulnerability-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.recent-vulnerability-row strong,
+.recent-vulnerability-row small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.recent-vulnerability-row strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.recent-vulnerability-row small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .severity-card.critical,
@@ -1886,6 +2286,9 @@ label {
   .vuln-summary-grid,
   .report-overview,
   .monitoring-grid,
+  .deep-launch,
+  .deep-session-strip,
+  .deep-inventory-grid,
   .command-grid,
   .pricing-grid,
   .guide-steps {
@@ -1906,6 +2309,12 @@ label {
   .vulnerability-row {
     gap: 8px;
     padding: 14px;
+  }
+
+  .vulnerability-pagination,
+  .vulnerability-pagination div {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .locked-hero {
@@ -1968,6 +2377,8 @@ label {
   }
 
   .control-row,
+  .deep-summary-grid,
+  .deep-finding,
   .metric-grid {
     grid-template-columns: 1fr;
   }

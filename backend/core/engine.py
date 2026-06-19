@@ -23,50 +23,50 @@ from urllib.parse import parse_qsl, urlparse
 from playwright.async_api import async_playwright
 
 from core.baseline_store           import load_baseline, save_baseline
-from scanner.crawler                import normalise_url, is_internal
-from scanner.headers                import check_headers
-from scanner.auth_surface_detector  import detect_auth_surface
-from scanner.cookies                import analyse_cookies
-from scanner.certificate_transparency_scanner import (
+from url_scanner.scanner.crawler import normalise_url, is_internal
+from url_scanner.scanner.headers import check_headers
+from url_scanner.scanner.auth_surface_detector import detect_auth_surface
+from url_scanner.scanner.cookies import analyse_cookies
+from url_scanner.scanner.certificate_transparency_scanner import (
     scan_certificate_transparency,
     scan_new_subdomain_alert,
     scan_subdomain_takeover,
 )
-from scanner.domain_credential_leak_scanner import scan_domain_credential_leaks
-from scanner.monitoring_scanner    import (
+from url_scanner.scanner.domain_credential_leak_scanner import scan_domain_credential_leaks
+from url_scanner.scanner.monitoring_scanner import (
     scan_exposed_asset_drift,
     scan_security_header_regression,
     scan_ssl_expiry_monitor,
 )
-from scanner.passive_exposure_scanner import scan_passive_host_intelligence
-from scanner.ssl_check              import check_ssl, evaluate_ssl
-from scanner.http_method_analyzer   import analyze_http_methods
-from scanner.javascript_secret_scanner import scan_javascript_secrets
-from scanner.html_secret_scanner    import scan_html_secrets
-from scanner.rendered_secret_scanner import scan_rendered_dom_secrets
-from scanner.dom_xss_scanner         import scan_dom_xss
-from scanner.directory_listing_scanner import scan_directory_listing
-from scanner.forced_browsing_scanner import scan_forced_browsing
-from scanner.graphql_introspection_scanner import scan_graphql_introspection
-from scanner.http_response_splitting_scanner import scan_http_response_splitting
-from scanner.open_redirect_scanner  import scan_open_redirect
-from scanner.open_port_scanner      import scan_open_ports
-from scanner.path_traversal_scanner import scan_path_traversal
-from scanner.reflected_xss_scanner  import scan_reflected_xss
-from scanner.source_map_scanner     import scan_source_maps
-from scanner.stored_xss_scanner     import scan_stored_xss
-from scanner.sql_injection_scanner  import scan_sql_injection
-from scanner.technology_fingerprinter import fingerprint_technology
-from scanner.api_rate_limit_scanner import scan_api_rate_limits
-from scanner.login_abuse_scanner import scan_login_abuse_protection
-from scanner.api_version_scanner    import scan_api_versions
-from scanner.csrf_scanner           import analyze_csrf_risk
-from scanner.dnssec_scanner         import scan_dnssec
-from scanner.domain_posture_scanner import scan_domain_posture
-from scanner.server_header_scanner  import scan_server_header_disclosure
-from scanner.sensitive_path_prober  import probe_sensitive_paths
-from scanner.cors_security_analyzer import analyze_cors_security
-from scanner.verbose_error_scanner  import scan_verbose_errors
+from url_scanner.scanner.passive_exposure_scanner import scan_passive_host_intelligence
+from url_scanner.scanner.ssl_check import check_ssl, evaluate_ssl
+from url_scanner.scanner.http_method_analyzer import analyze_http_methods
+from url_scanner.scanner.javascript_secret_scanner import scan_javascript_secrets
+from url_scanner.scanner.html_secret_scanner import scan_html_secrets
+from url_scanner.scanner.rendered_secret_scanner import scan_rendered_dom_secrets
+from url_scanner.scanner.dom_xss_scanner import scan_dom_xss
+from url_scanner.scanner.directory_listing_scanner import scan_directory_listing
+from url_scanner.scanner.forced_browsing_scanner import scan_forced_browsing
+from url_scanner.scanner.graphql_introspection_scanner import scan_graphql_introspection
+from url_scanner.scanner.http_response_splitting_scanner import scan_http_response_splitting
+from url_scanner.scanner.open_redirect_scanner import scan_open_redirect
+from url_scanner.scanner.open_port_scanner import scan_open_ports
+from url_scanner.scanner.path_traversal_scanner import scan_path_traversal
+from url_scanner.scanner.reflected_xss_scanner import scan_reflected_xss
+from url_scanner.scanner.source_map_scanner import scan_source_maps
+from url_scanner.scanner.stored_xss_scanner import scan_stored_xss
+from url_scanner.scanner.sql_injection_scanner import scan_sql_injection
+from url_scanner.scanner.technology_fingerprinter import fingerprint_technology
+from url_scanner.scanner.api_rate_limit_scanner import scan_api_rate_limits
+from url_scanner.scanner.login_abuse_scanner import scan_login_abuse_protection
+from url_scanner.scanner.api_version_scanner import scan_api_versions
+from url_scanner.scanner.csrf_scanner import analyze_csrf_risk
+from url_scanner.scanner.dnssec_scanner import scan_dnssec
+from url_scanner.scanner.domain_posture_scanner import scan_domain_posture
+from url_scanner.scanner.server_header_scanner import scan_server_header_disclosure
+from url_scanner.scanner.sensitive_path_prober import probe_sensitive_paths
+from url_scanner.scanner.cors_security_analyzer import analyze_cors_security
+from url_scanner.scanner.verbose_error_scanner import scan_verbose_errors
 
 
 if hasattr(sys.stdout, "reconfigure"):

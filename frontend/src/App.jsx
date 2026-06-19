@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Clock3,
   Code2,
+  Copy,
   Download,
   Globe2,
   LayoutDashboard,
@@ -32,6 +33,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl } from "./api.js";
 
 const STORAGE_KEY = "hit-securescan-history-v1";
+const DEEP_SCAN_STORAGE_KEY = "hit-securescan-active-scan-id-v1";
+const INDIA_TIMEZONE = "Asia/Kolkata";
 const emptyCounts = { Critical: 0, High: 0, Medium: 0, Low: 0, Info: 0 };
 const severityOrder = { Critical: 0, High: 1, Medium: 2, Low: 3, Informational: 4, Info: 4 };
 const defaultAccount = {
@@ -92,6 +95,39 @@ function formatDuration(totalSeconds) {
   return leftover ? `${hours}h ${leftover}m` : `${hours}h`;
 }
 
+function parseEnvExports(commandText) {
+  const exportsMap = {};
+  String(commandText || "").split("\n").forEach((line) => {
+    const match = line.match(/^export\s+([A-Z0-9_]+)="([^"]*)"$/);
+    if (match) exportsMap[match[1]] = match[2];
+  });
+  return exportsMap;
+}
+
+function formatDeepCommandPresentation(mode, commands) {
+  const rawCommand = commands?.[mode] || "";
+  const base = {
+    primary: rawCommand,
+    fallback: "",
+    note: commands?.notes || "Run this from inside the project folder on the server.",
+  };
+
+  if (!["linux", "git_bash"].includes(mode)) return base;
+
+  const env = parseEnvExports(rawCommand);
+  if (!env.SCAN_ID) return base;
+
+  const targetLine = env.SCAN_TARGET_URL ? `export SCAN_TARGET_URL="${env.SCAN_TARGET_URL}"\n` : "";
+  return {
+    primary:
+      `export SCAN_ID="${env.SCAN_ID}"\n` +
+      targetLine +
+      `bash <(curl -fsSL ${apiUrl("/api/deep-scan/run.sh")})`,
+    fallback: rawCommand,
+    note: "Use this on a Linux server, SSH terminal, or Git Bash. Open the alternative method if curl is unavailable.",
+  };
+}
+
 function severityClass(severity) {
   return String(severity || "Info").toLowerCase();
 }
@@ -144,7 +180,7 @@ function buildHistoryItem(report) {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     target: meta.target || "Unknown target",
     domain: domainFromUrl(meta.target || "Unknown target"),
-    scannedAt: meta.scan_completed_at || new Date().toLocaleString(),
+    scannedAt: meta.scan_completed_at || formatDateTime(new Date()),
     elapsedSeconds: meta.elapsed_seconds || 0,
     counts,
     total,
@@ -206,6 +242,7 @@ function App() {
   const [activeView, setActiveView] = useState("dashboard");
   const [history, setHistory] = useState(loadHistory);
   const [recentScans, setRecentScans] = useState([]);
+  const [dashboardSummary, setDashboardSummary] = useState(null);
   const [account, setAccount] = useState(defaultAccount);
   const [target, setTarget] = useState("");
   const [scanId, setScanId] = useState("");
@@ -216,6 +253,25 @@ function App() {
   const pollRef = useRef(null);
 
   const totals = useMemo(() => {
+    if (dashboardSummary) {
+      const vulnerabilityCounts = dashboardSummary.vulnerabilities || {};
+      return {
+        scans: dashboardSummary.scans?.total || 0,
+        domains: dashboardSummary.domains?.total || 0,
+        vulnerabilities: dashboardSummary.vulnerabilities?.total || 0,
+        processing: dashboardSummary.scans?.processing || 0,
+        failed: dashboardSummary.scans?.failed || 0,
+        byType: dashboardSummary.scans?.by_type || {},
+        counts: {
+          Critical: vulnerabilityCounts.critical || 0,
+          High: vulnerabilityCounts.high || 0,
+          Medium: vulnerabilityCounts.medium || 0,
+          Low: vulnerabilityCounts.low || 0,
+          Info: vulnerabilityCounts.info || 0,
+        },
+        risk: dashboardSummary.risk || "Info",
+      };
+    }
     const counts = { ...emptyCounts };
     let vulnerabilities = 0;
     history.forEach((item) => {
@@ -231,10 +287,11 @@ function App() {
       counts,
       risk: riskFromCounts(counts),
     };
-  }, [history]);
+  }, [history, dashboardSummary]);
 
   useEffect(() => {
     loadAccount();
+    loadDashboardSummary();
     loadRecentScans();
     return () => {
       if (pollRef.current) window.clearInterval(pollRef.current);
@@ -260,6 +317,18 @@ function App() {
       setRecentScans(Array.isArray(payload) ? payload : []);
     } catch {
       setRecentScans([]);
+    }
+  }
+
+  async function loadDashboardSummary() {
+    try {
+      const response = await fetch(apiUrl("/api/dashboard/summary"));
+      if (!response.ok) return;
+      const payload = await response.json();
+      setDashboardSummary(payload);
+      if (Array.isArray(payload.recent_scans)) setRecentScans(payload.recent_scans);
+    } catch {
+      setDashboardSummary(null);
     }
   }
 
@@ -307,6 +376,7 @@ function App() {
       const job = await response.json();
       setScanId(job.scan_id);
       await loadAccount();
+      await loadDashboardSummary();
       await loadRecentScans();
       pollRef.current = window.setInterval(() => pollScan(job.scan_id), 1800);
       await pollScan(job.scan_id);
@@ -345,6 +415,7 @@ function App() {
           },
         }));
         await loadAccount();
+        await loadDashboardSummary();
         await loadRecentScans();
         persistReport(payload);
         return;
@@ -393,7 +464,15 @@ function App() {
       <main className="workspace">
         <Topbar target={target} setTarget={setTarget} account={account} openPricing={() => setActiveView("pricing")} />
         {activeView === "dashboard" ? (
-          <Dashboard totals={totals} history={history} onScan={(value) => startScan(null, value)} openScan={() => setActiveView("scan")} account={account} />
+          <Dashboard
+            totals={totals}
+            history={history}
+            dashboardSummary={dashboardSummary}
+            recentScans={recentScans}
+            onScan={(value) => startScan(null, value)}
+            openScan={() => setActiveView("scan")}
+            account={account}
+          />
         ) : activeView === "monitoring" ? (
           <ActiveMonitoring openPricing={() => setActiveView("pricing")} />
         ) : activeView === "deep-scan" ? (
@@ -495,104 +574,142 @@ function Sidebar({ activeView, setActiveView, account }) {
   );
 }
 
-function DeepScan({ openPricing }) {
-  const linuxCommand = [
-    "ssh deploy@your-linux-server",
-    "cd /var/www/your-app",
-    'curl -fsSL https://cdn.securitytool.app/deep-scan.sh | bash -s -- \\',
-    '  --repo . --site-id YOUR_SITE_ID --branch main',
-  ];
-  const gitBashCommand = [
-    "cd /c/projects/your-app",
-    'export SECURITY_TOOL_TOKEN="YOUR_TOKEN"',
-    "npx @securitytool/deep-scan --repo . \\",
-    "  --site-id YOUR_SITE_ID --branch main",
-  ];
-  const ciCommand = [
-    "securitytool deep-scan --repo .",
-    "securitytool deep-scan --lockfiles package-lock.json requirements.txt",
-    "securitytool deep-scan --diff-only origin/main",
-    "securitytool deep-scan --report json",
-  ];
+function DeepScan() {
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [scanSession, setScanSession] = useState(null);
+  const [deepReport, setDeepReport] = useState(null);
+  const [commandMode, setCommandMode] = useState("linux");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [copiedFallback, setCopiedFallback] = useState(false);
+  const deepPollRef = useRef(null);
+
+  useEffect(() => {
+    const savedScanId = localStorage.getItem(DEEP_SCAN_STORAGE_KEY);
+    if (savedScanId) startDeepPolling(savedScanId);
+    return () => {
+      if (deepPollRef.current) window.clearInterval(deepPollRef.current);
+    };
+  }, []);
+
+  const commands = scanSession?.commands || {};
+  const commandModes = [
+    ["linux", "Linux"],
+    ["git_bash", "Git Bash"],
+    ["powershell", "PowerShell"],
+    ["cmd", "CMD"],
+  ].filter(([key]) => commands[key]);
+  const activeCommand = commands[commandMode] || commands.linux || "";
+  const commandPresentation = formatDeepCommandPresentation(commandMode, commands);
+  const report = deepReport || scanSession?.report;
+  const reportSummary = scanSession?.report_summary || {};
+  const summary = report?.summary || reportSummary.summary || {};
+  const codebase = report?.codebase || {};
+  const findings = report?.findings || [];
+  const reportMeta = report || reportSummary;
+
+  async function createDeepScan(event) {
+    event.preventDefault();
+    setError("");
+    setLoading(true);
+    setDeepReport(null);
+
+    try {
+      const response = await fetch(apiUrl("/api/deep-scan/api/scans"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ website_url: normalizeUrl(websiteUrl) }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const payload = await response.json();
+      setScanSession(payload.scan);
+      localStorage.setItem(DEEP_SCAN_STORAGE_KEY, payload.scan.id);
+      setCommandMode(payload.scan?.commands?.linux ? "linux" : Object.keys(payload.scan?.commands || {})[0] || "linux");
+      startDeepPolling(payload.scan.id);
+    } catch (scanError) {
+      setError("Could not prepare the Deep Scan command. Confirm backend_new is running and the deep-scan routes are mounted.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function startDeepPolling(id) {
+    if (deepPollRef.current) window.clearInterval(deepPollRef.current);
+    deepPollRef.current = window.setInterval(() => fetchDeepScan(id), 4000);
+    fetchDeepScan(id);
+  }
+
+  async function fetchDeepScan(id = scanSession?.id) {
+    if (!id) return;
+    try {
+      const response = await fetch(apiUrl(`/api/deep-scan/api/scans/${encodeURIComponent(id)}`));
+      if (!response.ok) throw new Error(await response.text());
+      const payload = await response.json();
+      setScanSession(payload);
+      localStorage.setItem(DEEP_SCAN_STORAGE_KEY, payload.id || id);
+      if (payload.report) setDeepReport(payload.report);
+      if (["completed", "failed"].includes(String(payload.status || "").toLowerCase()) && deepPollRef.current) {
+        window.clearInterval(deepPollRef.current);
+        deepPollRef.current = null;
+      }
+    } catch (pollError) {
+      setError("Could not refresh Deep Scan status. The session may no longer be available.");
+      localStorage.removeItem(DEEP_SCAN_STORAGE_KEY);
+      if (deepPollRef.current) window.clearInterval(deepPollRef.current);
+      deepPollRef.current = null;
+    }
+  }
+
+  async function copyCommand() {
+    if (!commandPresentation.primary) return;
+    await navigator.clipboard.writeText(commandPresentation.primary);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  }
+
+  async function copyFallbackCommand() {
+    if (!commandPresentation.fallback) return;
+    await navigator.clipboard.writeText(commandPresentation.fallback);
+    setCopiedFallback(true);
+    window.setTimeout(() => setCopiedFallback(false), 1400);
+  }
 
   return (
     <section className="page">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Premium module</p>
+          <p className="eyebrow">Source-code security scan</p>
           <h1>Deep Scan</h1>
         </div>
-        <span className="locked-plan-pill premium">
-          <Lock size={15} /> Premium Plan
+        <span className={`locked-plan-pill premium deep-status ${scanSession?.status || "idle"}`}>
+          <Terminal size={15} /> {scanSession?.status || "Ready"}
         </span>
       </div>
 
       <section className="locked-module">
-        <div className="locked-hero">
+        <form className="locked-hero deep-launch" onSubmit={createDeepScan}>
           <div className="locked-icon">
             <Code2 size={28} />
           </div>
           <div>
-            <p className="eyebrow">Locked service</p>
-            <h2>Upgrade to Premium Plan to run source-code deep scans</h2>
+            <p className="eyebrow">Repository scanner</p>
+            <h2>Prepare a scan command for the project server</h2>
             <span>
-              Deep Scan connects to your repository or server checkout and reviews source code, dependency files, configuration, secrets, and deployment artifacts. It complements public URL scanning by finding issues that are not visible from the outside.
+              Deep Scan reviews source files, dependency manifests, secrets, infrastructure config, CI/CD files, and static API routes from inside the client repository.
             </span>
           </div>
-          <button className="primary-action" type="button" onClick={openPricing}>
-            <Sparkles size={18} /> Upgrade to Premium
+          <label className="deep-url-field">
+            Website URL
+            <input value={websiteUrl} onChange={(event) => setWebsiteUrl(event.target.value)} placeholder="https://example.com" required />
+          </label>
+          <button className="primary-action" type="submit" disabled={loading}>
+            {loading ? <Loader2 className="spin" size={18} /> : <ArrowUpRight size={18} />}
+            Prepare command
           </button>
-        </div>
+        </form>
 
-        <div className="monitoring-grid deep-scan-grid">
-          <article className="panel monitoring-panel">
-            <div className="panel-title">
-              <strong>What Deep Scan checks</strong>
-              <span>Repository-level analysis before code reaches production</span>
-            </div>
-            <div className="monitoring-feature-list">
-              <div>
-                <CheckCircle2 size={18} />
-                <span>Hardcoded secrets, API keys, tokens, private keys, `.env` files, and risky credentials committed in source.</span>
-              </div>
-              <div>
-                <CheckCircle2 size={18} />
-                <span>Dependency CVEs from npm, Python, and lockfiles, including vulnerable versions and upgrade guidance.</span>
-              </div>
-              <div>
-                <CheckCircle2 size={18} />
-                <span>Security-sensitive code patterns such as SQL injection risks, unsafe HTML rendering, command execution, SSRF sinks, and weak auth logic.</span>
-              </div>
-              <div>
-                <CheckCircle2 size={18} />
-                <span>Infrastructure and deployment mistakes such as exposed Docker files, permissive CORS config, debug flags, weak headers, and public cloud/IaC risk signals.</span>
-              </div>
-            </div>
-          </article>
-
-          <article className="panel monitoring-panel">
-            <div className="panel-title">
-              <strong>Possible vulnerability output</strong>
-              <span>Examples of what the report can classify</span>
-            </div>
-            <div className="deep-vuln-list">
-              <span className="critical">Critical - Private key committed in repository</span>
-              <span className="high">High - SQL query built with string concatenation</span>
-              <span className="high">High - Vulnerable npm dependency with known CVE</span>
-              <span className="medium">Medium - JWT token missing expiry validation</span>
-              <span className="medium">Medium - Debug mode enabled in production config</span>
-              <span className="low">Low - Server version exposed in deployment config</span>
-            </div>
-          </article>
-        </div>
-
-        <div className="command-grid">
-          <CommandCard icon={Server} title="Linux server over SSH" subtitle="Run from the checked-out production or staging repository" lines={linuxCommand} />
-          <CommandCard icon={Terminal} title="Git Bash / local repository" subtitle="Run inside your project folder on Windows Git Bash" lines={gitBashCommand} />
-          <CommandCard icon={Code2} title="CI or scripted usage" subtitle="Useful for GitHub Actions, GitLab CI, or release pipelines" lines={ciCommand} />
-        </div>
-
-        <section className="panel monitoring-guide">
+        <section className="panel monitoring-guide module-guide-top">
           <div className="panel-title">
             <strong>How to use Deep Scan safely</strong>
             <span>Recommended source-code scanning workflow</span>
@@ -616,7 +733,149 @@ function DeepScan({ openPricing }) {
             </div>
           </div>
         </section>
+
+        {error ? <div className="error-box">{error}</div> : null}
+
+        {scanSession ? (
+          <section className="panel deep-command-panel">
+            <div className="panel-title horizontal">
+              <div>
+                <strong>Run command</strong>
+                <span>Open the project root on the server, run this command, then keep this page open for results.</span>
+              </div>
+              <button className="secondary-action" type="button" onClick={copyCommand}>
+                <Copy size={17} /> {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <div className="deep-command-tabs">
+              {commandModes.map(([key, label]) => (
+                <button className={commandMode === key ? "active" : ""} type="button" key={key} onClick={() => setCommandMode(key)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <pre className="monitor-script deep-command-output"><code>{commandPresentation.primary || activeCommand || "No command available for this session."}</code></pre>
+            <span className="deep-command-note">{commandPresentation.note}</span>
+            {commandPresentation.fallback ? (
+              <details className="deep-command-fallback">
+                <summary>Alternative download method</summary>
+                <button className="secondary-action" type="button" onClick={copyFallbackCommand}>
+                  <Copy size={17} /> {copiedFallback ? "Copied" : "Copy alternative"}
+                </button>
+                <pre className="monitor-script deep-command-output"><code>{commandPresentation.fallback}</code></pre>
+              </details>
+            ) : null}
+            <div className="deep-session-strip">
+              <span><strong>Scan ID</strong>{scanSession.id}</span>
+              <span><strong>Last update</strong>{formatDateTime(scanSession.updated_at)}</span>
+              <span><strong>Target</strong>{scanSession.website_url || "Repository root"}</span>
+            </div>
+          </section>
+        ) : null}
+
+        <div className="monitoring-grid deep-scan-grid">
+          <article className="panel monitoring-panel">
+            <div className="panel-title">
+              <strong>Live scan activity</strong>
+              <span>Events posted by the command running on the client server</span>
+            </div>
+            <div className="deep-timeline">
+              {(scanSession?.events || []).length ? (
+                [...scanSession.events].reverse().slice(0, 8).map((event, index) => (
+                  <div className={`deep-event ${event.status || "pending"}`} key={`${event.timestamp}-${index}`}>
+                    <Clock3 size={16} />
+                    <div>
+                      <strong>{event.message || "Scan event"}</strong>
+                      <span>{event.stage || "scan"} - {event.status || "pending"} - {formatDateTime(event.timestamp)}</span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="history-empty">
+                  <Clock3 size={18} />
+                  <span>Create a scan session to see command activity here.</span>
+                </div>
+              )}
+            </div>
+          </article>
+
+          <article className="panel monitoring-panel">
+            <div className="panel-title">
+              <strong>Finding summary</strong>
+              <span>Populates after the report upload finishes</span>
+            </div>
+            <div className="deep-summary-grid">
+              <div className="critical"><span>Critical</span><strong>{summary.critical || 0}</strong></div>
+              <div className="high"><span>High</span><strong>{summary.high || 0}</strong></div>
+              <div className="medium"><span>Medium</span><strong>{summary.medium || 0}</strong></div>
+              <div className="low"><span>Low</span><strong>{summary.low || 0}</strong></div>
+              <div><span>Total</span><strong>{summary.total || findings.length || 0}</strong></div>
+            </div>
+            {reportMeta?.report_file || reportMeta?.generated_at ? (
+              <span className="deep-report-meta">Report: {reportMeta.report_file || "uploaded"} - Generated {formatDateTime(reportMeta.generated_at)}</span>
+            ) : null}
+          </article>
+        </div>
+
+        {report ? <DeepScanReport report={report} codebase={codebase} findings={findings} /> : null}
+
       </section>
+    </section>
+  );
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString("en-IN", {
+        timeZone: INDIA_TIMEZONE,
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+}
+
+function DeepScanReport({ report, codebase, findings }) {
+  const categories = Object.entries(report.summary?.by_category || {}).sort((a, b) => b[1] - a[1]);
+  return (
+    <section className="panel deep-report-panel">
+      <div className="panel-title">
+        <div>
+          <strong>Deep Scan report</strong>
+          <span>{report.root || "Scanned repository"} - {findings.length} findings</span>
+        </div>
+      </div>
+      <div className="deep-inventory-grid">
+        <div>
+          <strong>Languages</strong>
+          {(codebase.languages || []).slice(0, 6).map((item) => <span key={item.name}>{item.name}: {item.files} files</span>)}
+        </div>
+        <div>
+          <strong>Frameworks</strong>
+          {(codebase.detected_frameworks || ["None detected"]).slice(0, 8).map((item) => <span key={item}>{item}</span>)}
+        </div>
+        <div>
+          <strong>Categories</strong>
+          {(categories.length ? categories : [["none", 0]]).slice(0, 8).map(([name, count]) => <span key={name}>{name}: {count}</span>)}
+        </div>
+      </div>
+      <div className="deep-findings-list">
+        {findings.slice(0, 12).map((finding, index) => (
+          <article className={`deep-finding ${severityClass(finding.severity)}`} key={`${finding.file}-${finding.line}-${index}`}>
+            <span>{finding.severity || "unknown"}</span>
+            <div>
+              <strong>{finding.title || "Security finding"}</strong>
+              <small>{finding.category || "code"} - {finding.file || "unknown file"}:{finding.line || 1}</small>
+              <p>{finding.remediation || finding.note || "Review the evidence and remediate in source."}</p>
+            </div>
+          </article>
+        ))}
+      </div>
     </section>
   );
 }
@@ -750,23 +1009,38 @@ function PricingPage({ onBack }) {
 
 function VulnerabilitiesPage() {
   const [findings, setFindings] = useState([]);
+  const [totalFindings, setTotalFindings] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const pageSize = 20;
   const [filters, setFilters] = useState({
     search: "",
     severity: "all",
     status: "all",
     domain: "all",
+    scanType: "all",
   });
 
   async function loadFindings() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(apiUrl("/api/findings?limit=200"));
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      if (filters.search.trim()) params.set("search", filters.search.trim());
+      if (filters.severity !== "all") params.set("severity", filters.severity);
+      if (filters.status !== "all") params.set("status", filters.status);
+      if (filters.domain !== "all") params.set("domain", filters.domain);
+      if (filters.scanType !== "all") params.set("scan_type", filters.scanType);
+      const response = await fetch(apiUrl(`/api/findings?${params.toString()}`));
       if (!response.ok) throw new Error("Findings request failed");
       const payload = await response.json();
-      setFindings(Array.isArray(payload) ? payload : []);
+      const items = Array.isArray(payload) ? payload : payload.items || [];
+      setFindings(items);
+      setTotalFindings(Array.isArray(payload) ? items.length : Number(payload.total || 0));
     } catch {
       setError("Could not load vulnerabilities. Confirm the backend is running and MongoDB is connected.");
     } finally {
@@ -776,40 +1050,11 @@ function VulnerabilitiesPage() {
 
   useEffect(() => {
     loadFindings();
-  }, []);
+  }, [page, filters.search, filters.severity, filters.status, filters.domain, filters.scanType]);
 
   const domains = useMemo(() => {
     return Array.from(new Set(findings.map((finding) => finding.domain).filter(Boolean))).sort();
   }, [findings]);
-
-  const filteredFindings = useMemo(() => {
-    const search = filters.search.trim().toLowerCase();
-    return findings
-      .filter((finding) => {
-        const severity = String(finding.severity || "info").toLowerCase();
-        const status = String(finding.status || "open").toLowerCase();
-        const domain = String(finding.domain || "");
-        const haystack = [
-          finding.vulnerability_name,
-          finding.description,
-          finding.domain,
-          finding.url,
-          finding.scan_id,
-        ].join(" ").toLowerCase();
-
-        return (
-          (filters.severity === "all" || severity === filters.severity) &&
-          (filters.status === "all" || status === filters.status) &&
-          (filters.domain === "all" || domain === filters.domain) &&
-          (!search || haystack.includes(search))
-        );
-      })
-      .sort((a, b) => {
-        const aRank = severityOrder[String(a.severity || "Info").replace(/^\w/, (letter) => letter.toUpperCase())] ?? 4;
-        const bRank = severityOrder[String(b.severity || "Info").replace(/^\w/, (letter) => letter.toUpperCase())] ?? 4;
-        return aRank - bRank || String(b.created_at || "").localeCompare(String(a.created_at || ""));
-      });
-  }, [findings, filters]);
 
   const summary = useMemo(() => {
     const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
@@ -818,15 +1063,20 @@ function VulnerabilitiesPage() {
       counts[severity in counts ? severity : "info"] += 1;
     });
     return {
-      total: findings.length,
+      total: totalFindings,
       domains: domains.length,
       open: findings.filter((finding) => String(finding.status || "open").toLowerCase() === "open").length,
       counts,
     };
-  }, [findings, domains]);
+  }, [findings, domains, totalFindings]);
+
+  const totalPages = Math.max(1, Math.ceil(totalFindings / pageSize));
+  const pageStart = totalFindings ? (page - 1) * pageSize + 1 : 0;
+  const pageEnd = Math.min(totalFindings, page * pageSize);
 
   function updateFilter(key, value) {
     setFilters((current) => ({ ...current, [key]: value }));
+    setPage(1);
   }
 
   return (
@@ -841,10 +1091,20 @@ function VulnerabilitiesPage() {
         </button>
       </div>
 
+      <section className="hint-panel vulnerability-intro-panel">
+        <AlertTriangle size={20} />
+        <div>
+          <strong>What this page is for</strong>
+          <span>
+            This view brings together vulnerabilities found by URL Scan and Deep Scan. Use it to filter by severity, status, domain, scan type, or scan ID, then open each row for evidence and remediation before marking the issue in your workflow.
+          </span>
+        </div>
+      </section>
+
       <div className="vuln-summary-grid">
-        <StatCard label="Total vulnerabilities" value={summary.total} detail="Across all stored scans" icon={AlertTriangle} tone={summary.counts.critical || summary.counts.high ? "High" : "Info"} />
-        <StatCard label="Affected domains" value={summary.domains} detail="Domains with saved findings" icon={Globe2} />
-        <StatCard label="Open findings" value={summary.open} detail="Not marked fixed or accepted" icon={BarChart3} tone={summary.open ? "Medium" : "Info"} />
+        <StatCard label="Total vulnerabilities" value={summary.total} detail="Matching current filters" icon={AlertTriangle} tone={summary.counts.critical || summary.counts.high ? "High" : "Info"} />
+        <StatCard label="Domains on page" value={summary.domains} detail="Visible in current result page" icon={Globe2} />
+        <StatCard label="Open on page" value={summary.open} detail="Current page only" icon={BarChart3} tone={summary.open ? "Medium" : "Info"} />
       </div>
 
       <section className="panel vulnerability-workbench">
@@ -883,6 +1143,14 @@ function VulnerabilitiesPage() {
               ))}
             </select>
           </label>
+          <label>
+            Scan type
+            <select value={filters.scanType} onChange={(event) => updateFilter("scanType", event.target.value)}>
+              <option value="all">All scan types</option>
+              <option value="url_scan">URL Scan</option>
+              <option value="deep_scan">Deep Scan</option>
+            </select>
+          </label>
         </div>
 
         <div className="severity-strip">
@@ -899,6 +1167,7 @@ function VulnerabilitiesPage() {
             <span>Vulnerability</span>
             <span>Domain</span>
             <span>Status</span>
+            <span>Scanned from</span>
             <span>Scan ID</span>
             <span>Detected</span>
           </div>
@@ -907,8 +1176,8 @@ function VulnerabilitiesPage() {
               <Loader2 className="spin" size={20} />
               <span>Loading vulnerabilities...</span>
             </div>
-          ) : filteredFindings.length ? (
-            filteredFindings.map((finding, index) => (
+          ) : findings.length ? (
+            findings.map((finding, index) => (
               <VulnerabilityRow finding={finding} key={finding.id || `${finding.scan_id}-${index}`} />
             ))
           ) : (
@@ -917,6 +1186,18 @@ function VulnerabilitiesPage() {
               <span>No vulnerabilities match the current filters.</span>
             </div>
           )}
+        </div>
+        <div className="vulnerability-pagination">
+          <span>{pageStart}-{pageEnd} of {totalFindings} vulnerabilities</span>
+          <div>
+            <button className="secondary-action" type="button" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+              Previous
+            </button>
+            <strong>Page {page} of {totalPages}</strong>
+            <button className="secondary-action" type="button" disabled={page >= totalPages || loading} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>
+              Next
+            </button>
+          </div>
         </div>
       </section>
     </section>
@@ -927,7 +1208,8 @@ function VulnerabilityRow({ finding }) {
   const [open, setOpen] = useState(false);
   const severity = String(finding.severity || "info").toLowerCase();
   const status = String(finding.status || "open").replace(/_/g, " ");
-  const detectedAt = finding.created_at ? new Date(finding.created_at).toLocaleString() : "Not available";
+  const source = finding.scanned_from || sourceLabel(finding);
+  const detectedAt = finding.created_at ? formatDateTime(finding.created_at) : "Not available";
 
   return (
     <article className={`vulnerability-row-wrap ${severity}`}>
@@ -936,6 +1218,7 @@ function VulnerabilityRow({ finding }) {
         <strong>{finding.vulnerability_name || "Security finding"}</strong>
         <span>{finding.domain || "Unknown domain"}</span>
         <span className="status-badge">{status}</span>
+        <span>{source}</span>
         <code>{finding.scan_id || "No scan ID"}</code>
         <span>{detectedAt}</span>
       </button>
@@ -961,6 +1244,10 @@ function VulnerabilityRow({ finding }) {
       ) : null}
     </article>
   );
+}
+
+function sourceLabel(item) {
+  return item?.scan_source === "deep_scan" ? "Deep Scan" : "URL Scan";
 }
 
 function safeJson(value) {
@@ -1008,6 +1295,31 @@ function ActiveMonitoring({ openPricing }) {
           </button>
         </div>
 
+        <section className="panel monitoring-guide module-guide-top">
+          <div className="panel-title">
+            <strong>How to add this in a header page</strong>
+            <span>Recommended placement for reliable monitoring</span>
+          </div>
+          <div className="guide-steps">
+            <div>
+              <strong>1</strong>
+              <span>Open the common layout file that renders your site header, usually `layout`, `app`, `_document`, or the shared HTML template.</span>
+            </div>
+            <div>
+              <strong>2</strong>
+              <span>Paste the script before the closing `&lt;/head&gt;` tag so it loads on every public page.</span>
+            </div>
+            <div>
+              <strong>3</strong>
+              <span>Replace `YOUR_SITE_ID` with the site ID generated inside Security Tool after domain verification.</span>
+            </div>
+            <div>
+              <strong>4</strong>
+              <span>Deploy your site, then run one manual scan to establish the first monitoring baseline.</span>
+            </div>
+          </div>
+        </section>
+
         <div className="monitoring-grid">
           <article className="panel monitoring-panel">
             <div className="panel-title">
@@ -1043,30 +1355,6 @@ function ActiveMonitoring({ openPricing }) {
           </article>
         </div>
 
-        <section className="panel monitoring-guide">
-          <div className="panel-title">
-            <strong>How to add this in a header page</strong>
-            <span>Recommended placement for reliable monitoring</span>
-          </div>
-          <div className="guide-steps">
-            <div>
-              <strong>1</strong>
-              <span>Open the common layout file that renders your site header, usually `layout`, `app`, `_document`, or the shared HTML template.</span>
-            </div>
-            <div>
-              <strong>2</strong>
-              <span>Paste the script before the closing `&lt;/head&gt;` tag so it loads on every public page.</span>
-            </div>
-            <div>
-              <strong>3</strong>
-              <span>Replace `YOUR_SITE_ID` with the site ID generated inside Security Tool after domain verification.</span>
-            </div>
-            <div>
-              <strong>4</strong>
-              <span>Deploy your site, then run one manual scan to establish the first monitoring baseline.</span>
-            </div>
-          </div>
-        </section>
       </section>
     </section>
   );
@@ -1096,8 +1384,9 @@ function Topbar({ target, setTarget, account, openPricing }) {
   );
 }
 
-function Dashboard({ totals, history, onScan, openScan, account }) {
-  const domains = buildDomainOverview(history);
+function Dashboard({ totals, history, dashboardSummary, recentScans, onScan, openScan, account }) {
+  const domains = dashboardSummary?.domains?.items || buildDomainOverview(history);
+  const recentVulnerabilities = dashboardSummary?.recent_vulnerabilities || [];
   const firstName = account?.first_name || "User";
 
   return (
@@ -1114,15 +1403,16 @@ function Dashboard({ totals, history, onScan, openScan, account }) {
 
       <div className="stat-grid">
         <StatCard label="Domains monitored" value={totals.domains} detail={`${totals.scans} scans stored`} icon={Globe2} />
-        <StatCard label="All-time vulnerabilities" value={totals.vulnerabilities} detail="Across completed scans" icon={AlertTriangle} tone={totals.risk} />
-        <StatCard label="Current top risk" value={totals.risk} detail="Based on saved history" icon={ShieldCheck} tone={totals.risk} />
+        <StatCard label="All vulnerabilities" value={totals.vulnerabilities} detail={`${totals.byType?.url_scan || 0} URL / ${totals.byType?.deep_scan || 0} Deep scans`} icon={AlertTriangle} tone={totals.risk} />
+        <StatCard label="Processing now" value={totals.processing || 0} detail={`${totals.failed || 0} failed scans stored`} icon={Activity} tone={totals.processing ? "Medium" : "Info"} />
+        <StatCard label="Current top risk" value={totals.risk} detail="From Supabase vulnerabilities" icon={ShieldCheck} tone={totals.risk} />
       </div>
 
       <div className="dashboard-stack">
         <section className="panel">
           <div className="panel-title">
             <strong>Severity breakdown</strong>
-            <span>Saved completed scan history</span>
+            <span>Loaded from Supabase vulnerabilities</span>
           </div>
           <div className="severity-grid">
             {Object.entries(totals.counts).map(([severity, count]) => (
@@ -1137,17 +1427,25 @@ function Dashboard({ totals, history, onScan, openScan, account }) {
         <section className="panel">
           <div className="panel-title">
             <strong>All domain overview</strong>
-            <span>Risk, protection score, and practical next step</span>
+            <span>Built from stored URL and Deep Scan rows</span>
           </div>
           <DomainOverview domains={domains} onScan={onScan} />
         </section>
 
         <section className="panel">
           <div className="panel-title">
-            <strong>Recent domains</strong>
-            <span>Latest saved scans</span>
+            <strong>Recent scans</strong>
+            <span>Latest Supabase scan records</span>
           </div>
-          <HistoryList history={history} onScan={onScan} />
+          <RecentScansList scans={recentScans || []} onScan={onScan} />
+        </section>
+
+        <section className="panel">
+          <div className="panel-title">
+            <strong>Recent vulnerabilities</strong>
+            <span>Newest stored URL and Deep Scan findings</span>
+          </div>
+          <RecentVulnerabilitiesList vulnerabilities={recentVulnerabilities} />
         </section>
       </div>
     </section>
@@ -1186,6 +1484,34 @@ function DomainOverview({ domains, onScan }) {
           </button>
         </article>
       ))}
+    </div>
+  );
+}
+
+function RecentVulnerabilitiesList({ vulnerabilities }) {
+  if (!vulnerabilities?.length) {
+    return (
+      <div className="history-empty">
+        <CheckCircle2 size={20} />
+        <span>No vulnerabilities stored yet.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="recent-vulnerability-list">
+      {vulnerabilities.slice(0, 8).map((finding, index) => {
+        const severity = String(finding.severity || "info").toLowerCase();
+        return (
+          <article className={`recent-vulnerability-row ${severity}`} key={finding.id || `${finding.scan_id}-${index}`}>
+            <span className="severity-badge">{severity}</span>
+            <div>
+              <strong>{finding.vulnerability_name || "Security finding"}</strong>
+              <small>{finding.scanned_from || sourceLabel(finding)} - {finding.domain || "Unknown domain"} - {formatDateTime(finding.created_at)}</small>
+            </div>
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -1256,7 +1582,7 @@ function ScanView(props) {
       <section className="panel recent-scans-panel">
         <div className="panel-title">
           <strong>Recent scans</strong>
-          <span>Loaded from MongoDB scan history</span>
+          <span>Loaded from Supabase scan history</span>
         </div>
         <RecentScansList scans={recentScans} onScan={onScan} />
       </section>
@@ -1490,13 +1816,14 @@ function RecentScansList({ scans, onScan }) {
           const url = scan.url || scan.target || "";
           const domain = scan.domain || domainFromUrl(url || "Unknown domain");
           const status = String(scan.status || "unknown");
+          const source = scan.scanned_from || sourceLabel(scan);
           const findings = scan.summary?.findings ?? scan.findings_found ?? 0;
-          const createdAt = scan.created_at ? new Date(scan.created_at).toLocaleString() : "No timestamp";
+          const createdAt = scan.created_at ? formatDateTime(scan.created_at) : "No timestamp";
           return (
             <article className="recent-scan-row" key={scan.scan_id || `${domain}-${createdAt}`}>
               <div>
                 <strong>{domain}</strong>
-                <span>{status} - {findings} findings</span>
+                <span>{source} - {status} - {findings} findings</span>
                 <small>{createdAt}</small>
               </div>
               <button type="button" onClick={() => onScan(url || domain)} title="Re-scan domain">

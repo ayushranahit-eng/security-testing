@@ -1,0 +1,206 @@
+# scan.sh
+
+`scan.sh` is a source-code-only security scanner. It is copied into a client codebase and run on the client server, CI runner, or cron job. It analyzes files at rest and does not test a live website.
+
+## What It Does
+
+| Category | Detection |
+| --- | --- |
+| Secrets | Hardcoded keys, `.env` files, `.git` directories, backup/temp files, SQL dumps, CI config secrets, Git history secrets via gitleaks |
+| SCA | Vulnerable dependencies through `osv-scanner` for npm, Python, Go, Ruby, and other supported lockfiles |
+| SAST | Semgrep rules and custom static checks for SQL injection, NoSQL injection, SSTI, insecure deserialization, command injection, eval/exec, path traversal, weak crypto, cookie flags, SMTP header injection, SSRF/open redirect patterns, unsafe uploads, mass assignment, JWT mistakes, and CSRF-disabled routes |
+| Config | Debug mode, wildcard CORS, API docs/debug routes, source maps, missing SRI, host-header trust, TLS verification disabled, weak password/default credential patterns |
+| IaC | Semgrep rules for Terraform, Kubernetes, Dockerfile, CI/CD, S3/public access, broad security groups, privileged containers, public databases, CloudTrail/GuardDuty hints, and IAM-style misconfigurations |
+| AI/LLM | Static hints for risky prompt construction, tool-call exposure patterns, and unsafe rendering of model output |
+
+## Explicitly Out Of Scope
+
+| Area | Reason |
+| --- | --- |
+| Confirmed reflected/stored/DOM XSS, confirmed CSRF/SSRF/open redirect exploitability, runtime CORS/JWT behavior | Require live HTTP requests, browser/runtime context, or authenticated app workflows |
+| Open ports, TLS/ciphers, DNS takeover, Shodan-style checks | Network/infra scanning |
+| Actual AWS/GCP/Azure account posture | Requires cloud API access |
+| Prompt injection or LLM runtime testing | Requires live endpoints and app context |
+| Business logic and attack chaining | Requires active pentesting and human context |
+
+
+## Official Client Command
+
+Go inside the client project/repository folder, then run only this:
+
+```bash
+SCAN_ID="SCAN_ID_FROM_DASHBOARD" bash <(curl -fsSL SCANNER_URL/run.sh)
+```
+
+For this deployment:
+
+```bash
+SCAN_ID="SCAN_ID_FROM_DASHBOARD" bash <(curl -fsSL https://sh-security-production.up.railway.app/run.sh)
+```
+
+Only `scan id` changes per client.
+
+Most shared/VPS hosting panels such as CloudPanel, Hostinger VPS, cPanel terminal, and CI runners provide a Linux shell. The dashboard's Linux command is the standard client command. It only needs `bash`, Python 3, and one downloader (`curl`, `wget`, or Python's standard library fallback). Windows/Git Bash commands are mainly for local testing on Windows machines.
+
+## Scanner Versions
+
+The hosted server supports versioned scanner bundles:
+
+```text
+/run.sh     stable default scanner, controlled by SCAN_DEFAULT_VERSION
+/v1/run.sh  original stable scanner
+/v2/run.sh  improved scanner with cleaner Laravel/vendor handling and better gitleaks install
+/v3/run.sh  expanded static scanner with broader config, auth, web, cloud/IaC, and AI/LLM checks
+```
+
+`/run.sh` defaults to v1 unless the server sets:
+
+```text
+SCAN_DEFAULT_VERSION=v3
+```
+
+Reports and scan progress still use the shared backend APIs:
+
+```text
+/api/report
+/api/scans/{scan_id}/event
+```
+## Client Usage
+
+Run inside the client repository:
+
+```bash
+chmod +x scan.sh find_exposed_files.sh
+./scan.sh
+```
+
+Offline mode:
+
+```bash
+./scan.sh --offline --skip-downloads
+```
+
+CI gating:
+
+```bash
+./scan.sh --fail-on high
+```
+
+The scanner writes:
+
+```text
+security-report-YYYYMMDD-HHMMSS.json
+.scan-sh/
+```
+
+`.scan-sh/` is a temporary raw-output folder created by the scanner. If you delete it, the next scan creates it again. It is generated locally, not downloaded.
+
+To remove `.scan-sh/` automatically after a scan:
+
+```bash
+./scan.sh --clean
+```
+
+or:
+
+```bash
+SCAN_CLEAN=1 ./scan.sh
+```
+
+## Optional Report Upload
+
+Report upload happens only when `SCAN_ID` is set:
+
+```bash
+BASE_URL="https://scanner.example.com" \
+SCAN_ID="scan_id_from_dashboard" \
+./scan.sh
+```
+
+Without a scan id, the report stays local.
+
+## Localhost Test
+
+Start the local rule/report server:
+
+```bash
+cd sh_development
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+export SCAN_ID="scan_id_from_dashboard"
+uvicorn server:app --reload --port 8000
+```
+
+In another terminal:
+
+```bash
+cd sh_development/sample-vulnerable-repo
+BASE_URL="http://localhost:8000" SCAN_ID="scan_id_from_dashboard" ../scan.sh --fail-on never
+```
+
+Open the generated `security-report-*.json` file to review merged findings.
+
+## Server Deployment Notes
+
+Railway test deployment:
+
+```bash
+uvicorn server:app --host 0.0.0.0 --port "$PORT"
+```
+
+CloudPanel production deployment:
+
+- Create a Python app/site.
+- Set `SCAN_ID` and `SCAN_SERVER_DATA_DIR`.
+- Run `uvicorn server:app --host 127.0.0.1 --port 8000` behind the panel reverse proxy.
+- Use HTTPS on the public domain before accepting uploaded reports.
+- Treat uploaded reports as sensitive because they may contain filenames, package names, and secret evidence previews.
+
+## Tool Notes
+
+- `gitleaks` is downloaded/cached when missing unless `--offline` or `--skip-downloads` is used.
+- `osv-scanner` is downloaded/cached when missing unless offline.
+- `semgrep` is used when available. The hosted runner tries to install it with `pip --user` on normal Python installs and plain `pip install` inside virtualenvs such as Railway. If Semgrep is unavailable, the scanner still runs custom checks, gitleaks, and OSV where possible.
+- `merge_report.py` uses only the Python 3 standard library.
+- `find_exposed_files.sh` uses Bash plus Python 3 standard library.
+
+## One-Command Hosted Usage
+
+After Railway/production deployment, a client can run the scanner without manually uploading scanner files.
+
+CloudPanel example:
+
+```bash
+cd /home/<site-user>/htdocs/<domain>
+SCAN_ID="scan_id_from_dashboard" bash <(curl -fsSL https://sh-security-production.up.railway.app/run.sh)
+```
+
+What this does:
+
+```text
+1. Downloads scan.sh, merge_report.py, and find_exposed_files.sh into .scan-sh-runner/
+2. Downloads rules from your deployed scanner server
+3. Runs the scan in the current client project folder
+4. Saves security-report-YYYYMMDD-HHMMSS.json
+5. Uploads the report only if SCAN_ID is provided
+6. Deletes the temporary .scan-sh-runner/ folder when done
+```
+
+Use stricter CI/client gating:
+
+```bash
+SCAN_ID="scan_id_from_dashboard" SCAN_ARGS="--fail-on high --clean" bash <(curl -fsSL https://sh-security-production.up.railway.app/run.sh)
+```
+
+Run without uploading the report:
+
+```bash
+bash <(curl -fsSL https://sh-security-production.up.railway.app/run.sh)
+```
+
+If Semgrep install is not allowed on the server:
+
+```bash
+SKIP_SEMGREP_INSTALL=1 bash <(curl -fsSL https://sh-security-production.up.railway.app/run.sh)
+```
