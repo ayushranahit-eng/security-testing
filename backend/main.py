@@ -8,6 +8,7 @@ just await it directly — no threads, no event loop juggling needed.
 import json
 import io
 import asyncio
+import os
 import sys
 import threading
 import traceback
@@ -64,6 +65,13 @@ app.add_middleware(
         "http://127.0.0.1:5500",
         "http://localhost:8001",
         "http://127.0.0.1:8001",
+        "https://security-testing-nine.vercel.app",
+        "https://securitytool-api.handsintechnology.in",
+        *[
+            origin.strip().rstrip("/")
+            for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+            if origin.strip()
+        ],
         "null",
     ],
     allow_methods=["GET", "POST"],
