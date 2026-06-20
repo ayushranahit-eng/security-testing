@@ -26,14 +26,17 @@ import {
   Sparkles,
   Target,
   Terminal,
+  LogOut,
   UserRound,
   Wifi,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiUrl } from "./api.js";
+import { apiUrl, authHeaders } from "./api.js";
+import shieldLogo from "./assets/shield.png";
 
 const STORAGE_KEY = "hit-securescan-history-v1";
 const DEEP_SCAN_STORAGE_KEY = "hit-securescan-active-scan-id-v1";
+const ACTIVE_VIEW_STORAGE_KEY = "hit-securescan-active-view-v1";
 const INDIA_TIMEZONE = "Asia/Kolkata";
 const emptyCounts = { Critical: 0, High: 0, Medium: 0, Low: 0, Info: 0 };
 const severityOrder = { Critical: 0, High: 1, Medium: 2, Low: 3, Informational: 4, Info: 4 };
@@ -238,8 +241,16 @@ function buildDomainOverview(history) {
     .sort((a, b) => b.score - a.score || b.total - a.total);
 }
 
-function App() {
-  const [activeView, setActiveView] = useState("dashboard");
+function loadActiveView() {
+  try {
+    return localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "dashboard";
+  } catch {
+    return "dashboard";
+  }
+}
+
+function App({ onLogout }) {
+  const [activeView, setActiveView] = useState(loadActiveView);
   const [history, setHistory] = useState(loadHistory);
   const [recentScans, setRecentScans] = useState([]);
   const [dashboardSummary, setDashboardSummary] = useState(null);
@@ -298,9 +309,13 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, activeView);
+  }, [activeView]);
+
   async function loadAccount() {
     try {
-      const response = await fetch(apiUrl("/api/me"));
+      const response = await fetch(apiUrl("/api/me"), { headers: authHeaders() });
       if (!response.ok) return;
       const payload = await response.json();
       setAccount({ ...defaultAccount, ...payload });
@@ -311,7 +326,7 @@ function App() {
 
   async function loadRecentScans() {
     try {
-      const response = await fetch(apiUrl("/api/scans?limit=12"));
+      const response = await fetch(apiUrl("/api/scans?limit=12"), { headers: authHeaders() });
       if (!response.ok) return;
       const payload = await response.json();
       setRecentScans(Array.isArray(payload) ? payload : []);
@@ -322,7 +337,7 @@ function App() {
 
   async function loadDashboardSummary() {
     try {
-      const response = await fetch(apiUrl("/api/dashboard/summary"));
+      const response = await fetch(apiUrl("/api/dashboard/summary"), { headers: authHeaders() });
       if (!response.ok) return;
       const payload = await response.json();
       setDashboardSummary(payload);
@@ -363,7 +378,7 @@ function App() {
     try {
       const response = await fetch(apiUrl("/api/scan"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           url,
           headless: true,
@@ -460,7 +475,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar activeView={activeView} setActiveView={setActiveView} account={account} />
+      <Sidebar activeView={activeView} setActiveView={setActiveView} account={account} onLogout={onLogout} />
       <main className="workspace">
         <Topbar target={target} setTarget={setTarget} account={account} openPricing={() => setActiveView("pricing")} />
         {activeView === "dashboard" ? (
@@ -500,7 +515,7 @@ function App() {
   );
 }
 
-function Sidebar({ activeView, setActiveView, account }) {
+function Sidebar({ activeView, setActiveView, account, onLogout }) {
   const [accountOpen, setAccountOpen] = useState(false);
   const accountName = `${account?.first_name || "Ayush"} ${account?.last_name || "Rana"}`.trim();
   const planName = account?.account_plan?.name || "Basic";
@@ -509,7 +524,7 @@ function Sidebar({ activeView, setActiveView, account }) {
     <aside className="sidebar">
       <div className="brand">
         <div className="brand-mark" aria-hidden="true">
-          <Globe2 size={21} />
+          <img src={shieldLogo} alt="" />
         </div>
         <div>
           <strong>Security Tool</strong>
@@ -566,6 +581,10 @@ function Sidebar({ activeView, setActiveView, account }) {
             <button className="advanced-upgrade" type="button" onClick={() => setActiveView("pricing")}>
               <Sparkles size={16} />
               <span>Upgrade plan</span>
+            </button>
+            <button type="button" onClick={onLogout}>
+              <LogOut size={16} />
+              <span>Logout</span>
             </button>
           </div>
         ) : null}
@@ -954,7 +973,7 @@ function PricingPage({ onBack }) {
           <ArrowUpRight size={17} /> Back to dashboard
         </button>
         <div className="pricing-page-brand">
-          <span><Globe2 size={20} /></span>
+          <span><img src={shieldLogo} alt="" /></span>
           <strong>Security Tool</strong>
         </div>
         <button className="primary-action contact-sales-btn" type="button">
@@ -1035,14 +1054,14 @@ function VulnerabilitiesPage() {
       if (filters.status !== "all") params.set("status", filters.status);
       if (filters.domain !== "all") params.set("domain", filters.domain);
       if (filters.scanType !== "all") params.set("scan_type", filters.scanType);
-      const response = await fetch(apiUrl(`/api/findings?${params.toString()}`));
+      const response = await fetch(apiUrl(`/api/findings?${params.toString()}`), { headers: authHeaders() });
       if (!response.ok) throw new Error("Findings request failed");
       const payload = await response.json();
       const items = Array.isArray(payload) ? payload : payload.items || [];
       setFindings(items);
       setTotalFindings(Array.isArray(payload) ? items.length : Number(payload.total || 0));
     } catch {
-      setError("Could not load vulnerabilities. Confirm the backend is running and MongoDB is connected.");
+      setError("Could not load vulnerabilities. Confirm the backend is running and Supabase is connected.");
     } finally {
       setLoading(false);
     }
@@ -1065,7 +1084,6 @@ function VulnerabilitiesPage() {
     return {
       total: totalFindings,
       domains: domains.length,
-      open: findings.filter((finding) => String(finding.status || "open").toLowerCase() === "open").length,
       counts,
     };
   }, [findings, domains, totalFindings]);
@@ -1104,7 +1122,6 @@ function VulnerabilitiesPage() {
       <div className="vuln-summary-grid">
         <StatCard label="Total vulnerabilities" value={summary.total} detail="Matching current filters" icon={AlertTriangle} tone={summary.counts.critical || summary.counts.high ? "High" : "Info"} />
         <StatCard label="Domains on page" value={summary.domains} detail="Visible in current result page" icon={Globe2} />
-        <StatCard label="Open on page" value={summary.open} detail="Current page only" icon={BarChart3} tone={summary.open ? "Medium" : "Info"} />
       </div>
 
       <section className="panel vulnerability-workbench">
@@ -1839,7 +1856,7 @@ function RecentScansList({ scans, onScan }) {
   return (
     <div className="history-empty">
       <strong>No recent scans stored yet.</strong>
-      <span>Run a scan after MongoDB is connected and it will appear here.</span>
+      <span>Run a scan after Supabase is connected and it will appear here.</span>
     </div>
   );
 }

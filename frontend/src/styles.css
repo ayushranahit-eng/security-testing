@@ -861,6 +861,14 @@ h2 {
   background: #ffffff;
 }
 
+.brand-mark img,
+.landing-logo span img,
+.pricing-page-brand span img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
 .deep-finding > span {
   justify-self: start;
   align-self: start;
@@ -1189,8 +1197,12 @@ h2 {
 
 .vuln-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  margin-bottom: 16px;
+}
+
+.vulnerability-intro-panel {
   margin-bottom: 16px;
 }
 
@@ -2518,9 +2530,9 @@ label {
   margin: 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 390px;
-  align-items: center;
+  align-items: start;
   gap: 44px;
-  padding: 70px 22px 70px;
+  padding: 24px 22px 70px;
 }
 
 .landing-hero-copy {
@@ -2690,6 +2702,81 @@ label {
   margin-top: 20px;
 }
 
+.landing-auth-toggle {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid #dde1da;
+  border-radius: 999px;
+  padding: 4px;
+  background: #fbfaf7;
+}
+
+.landing-auth-toggle button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 999px;
+  color: #5f6863;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.landing-auth-toggle button.active {
+  color: #ffffff;
+  background: #151719;
+  box-shadow: 0 8px 18px rgba(16, 19, 21, 0.14);
+}
+
+.landing-inline-notice {
+  margin-top: 18px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid #cfe2dc;
+  border-radius: 18px;
+  padding: 14px 16px;
+  background: #edf8f5;
+}
+
+.landing-inline-notice strong,
+.landing-inline-notice span {
+  display: block;
+}
+
+.landing-inline-notice strong {
+  color: #184f48;
+  font-size: 14px;
+}
+
+.landing-inline-notice span {
+  color: #49635f;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.landing-inline-notice button {
+  justify-self: start;
+  min-height: 30px;
+  border: 1px solid #b9d6cd;
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #1d5e55;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.landing-scan-notice {
+  width: min(100%, 760px);
+}
+
+.landing-name-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .landing-auth-fields label {
   display: grid;
   gap: 8px;
@@ -2715,6 +2802,32 @@ label {
   border: 0;
   outline: 0;
   background: transparent;
+}
+
+.landing-password-field {
+  padding-right: 6px;
+}
+
+.landing-password-toggle {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  color: #5f6863;
+  background: transparent;
+}
+
+.landing-password-toggle:hover {
+  background: #f1efe8;
+}
+
+.landing-field-note {
+  color: #6a716d;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .landing-error {
@@ -2795,7 +2908,7 @@ label {
 
   .landing-hero {
     grid-template-columns: 1fr;
-    padding-top: 52px;
+    padding-top: 32px;
   }
 
   .landing-hero-copy {
@@ -2826,6 +2939,10 @@ label {
   .landing-url-bar button {
     grid-column: 1 / -1;
     width: 100%;
+  }
+
+  .landing-name-grid {
+    grid-template-columns: 1fr;
   }
 
   .landing-hero h1 {

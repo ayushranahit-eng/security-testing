@@ -135,7 +135,7 @@ Notes:
 
 Stores product user/profile data.
 
-Supabase Auth can be added later. For now, this table can also support the current default user flow.
+This table stores app profiles and app-owned email/password auth metadata.
 
 ```sql
 create table if not exists users (
@@ -145,6 +145,7 @@ create table if not exists users (
   first_name text not null,
   last_name text,
   email text not null,
+  password_hash text,
   company_name text,
   company_url text,
   role text not null default 'owner',
@@ -566,7 +567,7 @@ For local development:
 DATABASE_PROVIDER=supabase
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
-SUPABASE_ANON_KEY=YOUR_ANON_KEY
+AUTH_TOKEN_SECRET=CHANGE_THIS_TO_A_LONG_RANDOM_SECRET
 
 DEFAULT_USER_FIRST_NAME=Ayush
 DEFAULT_USER_LAST_NAME=Rana
@@ -582,7 +583,7 @@ For CloudPanel production backend:
 DATABASE_PROVIDER=supabase
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
-SUPABASE_ANON_KEY=YOUR_ANON_KEY
+AUTH_TOKEN_SECRET=CHANGE_THIS_TO_A_LONG_RANDOM_SECRET
 
 DEFAULT_USER_FIRST_NAME=Ayush
 DEFAULT_USER_LAST_NAME=Rana
@@ -598,7 +599,28 @@ Important:
 
 - `SUPABASE_SERVICE_ROLE_KEY` is secret. Use it only in the backend.
 - Do not put `SUPABASE_SERVICE_ROLE_KEY` in Vercel frontend env.
+- `AUTH_TOKEN_SECRET` signs your app login tokens. Keep it secret and stable.
 - The service role key bypasses RLS, so protect the backend.
+
+## App-Owned Email/Password Auth
+
+The app does not need Supabase Auth for the current login flow.
+
+Passwords are stored as salted PBKDF2 hashes in `public.users.password_hash`.
+Do not store plaintext passwords.
+
+If your `users` table already exists, run:
+
+```sql
+alter table public.users
+add column if not exists password_hash text;
+```
+
+Then create users through the app's Create Account form so the backend can hash
+the password before saving it.
+
+Existing users without `password_hash` cannot sign in until you recreate them
+through Create Account or add a hashed password through a backend/admin flow.
 
 ### Frontend `frontend2/.env.production`
 
@@ -610,7 +632,7 @@ VITE_API_BASE_URL=https://securitytool-api.handsintechnology.in
 
 Do not add the service role key to frontend env.
 
-If later the frontend talks directly to Supabase Auth, add only public values:
+If later the frontend talks directly to Supabase APIs, add only public values:
 
 ```env
 VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
@@ -621,7 +643,7 @@ VITE_SUPABASE_ANON_KEY=YOUR_ANON_KEY
 
 For the current backend-driven architecture, the backend can use `SUPABASE_SERVICE_ROLE_KEY` and enforce user/account logic in API code.
 
-When real user login is added, enable RLS and map users to Supabase Auth.
+If the frontend later talks directly to Supabase tables, enable RLS and map access to the authenticated app user model.
 
 Tables to enable RLS on later:
 
@@ -633,7 +655,7 @@ alter table vulnerabilities enable row level security;
 alter table scan_reports enable row level security;
 ```
 
-Do not enable strict RLS until the backend has been updated to use Supabase Auth user IDs or service-role-only server queries.
+Do not enable strict RLS until the backend and frontend access model has been updated for direct client-side Supabase reads.
 
 ## Migration From Current Mongo Shape
 

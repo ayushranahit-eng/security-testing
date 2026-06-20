@@ -19,9 +19,10 @@ from urllib.parse import urlparse
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from url_scanner.models import ScanRequest
 from config        import DEFAULT_CONFIG
@@ -42,6 +43,18 @@ app = FastAPI(
 
 SCAN_JOBS: dict[str, dict] = {}
 SCAN_LOCK = threading.Lock()
+
+
+class SignInRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=8)
+
+
+class SignUpRequest(SignInRequest):
+    first_name: str = Field(min_length=1, max_length=80)
+    last_name: str | None = Field(default=None, max_length=80)
+    company_name: str | None = Field(default=None, max_length=160)
+    company_url: str | None = Field(default=None, max_length=240)
 
 
 @app.on_event("startup")
@@ -147,6 +160,16 @@ def _persist_scan_update(scan_id: str, updates: dict, event: dict | None = None)
             supabase.update_scan(scan_id, updates, event=event)
     except Exception as exc:
         print(f"Supabase scan update skipped for {scan_id}: {exc}")
+
+
+def _authenticated_user_id(authorization: str | None) -> str | None:
+    token = _bearer_token(authorization)
+    if not token:
+        return None
+    user = supabase.user_from_access_token(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    return str(user["id"])
 
 
 async def _run_background_scan(scan_id: str, req: ScanRequest) -> None:
@@ -514,7 +537,7 @@ def health():
 
 
 @app.post("/scan/start", include_in_schema=False)
-async def scan_start(req: ScanRequest):
+async def scan_start(req: ScanRequest, authorization: str | None = Header(default=None)):
     """Start a scan in the background. Use the scan_id to poll status."""
     scan_id = _next_scan_id()
     now = datetime.now().isoformat(timespec="seconds")
@@ -548,7 +571,7 @@ async def scan_start(req: ScanRequest):
     if supabase.enabled():
         try:
             if supabase.is_ready():
-                supabase.create_scan(scan_id, str(req.url), _build_cfg(req))
+                supabase.create_scan(scan_id, str(req.url), _build_cfg(req), user_id=_authenticated_user_id(authorization))
         except Exception as exc:
             print(f"Supabase scan create skipped for {scan_id}: {exc}")
             with SCAN_LOCK:
@@ -653,8 +676,48 @@ def scan_status(
     return _public_job(scan_id)
 
 
+def _bearer_token(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+@app.post("/auth/signup")
+def auth_signup(req: SignUpRequest):
+    if not supabase.auth_enabled():
+        raise HTTPException(status_code=503, detail="App auth is not configured")
+    try:
+        return supabase.sign_up_user(
+            email=req.email,
+            password=req.password,
+            first_name=req.first_name,
+            last_name=req.last_name,
+            company_name=req.company_name,
+            company_url=req.company_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/auth/signin")
+def auth_signin(req: SignInRequest):
+    if not supabase.auth_enabled():
+        raise HTTPException(status_code=503, detail="App auth is not configured")
+    try:
+        return supabase.sign_in_user(req.email, req.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid email or password") from exc
+
+
 @app.get("/me")
-def current_user():
+def current_user(authorization: str | None = Header(default=None)):
     if not supabase.enabled() or not supabase.is_ready():
         return {
             "first_name": "Ayush",
@@ -670,6 +733,18 @@ def current_user():
             "scans_left": max(0, 5 - len(SCAN_JOBS)),
             "persistence": "memory",
         }
+
+    token = _bearer_token(authorization)
+    if token:
+        try:
+            user = supabase.user_from_access_token(token)
+            if user is None:
+                raise HTTPException(status_code=401, detail="Invalid session")
+            return supabase.current_user_payload(user)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail="Invalid session") from exc
 
     return supabase.current_user_payload()
 
@@ -825,9 +900,9 @@ def account_plans():
 
 
 @app.get("/dashboard/summary")
-def dashboard_summary():
+def dashboard_summary(authorization: str | None = Header(default=None)):
     if supabase.enabled() and supabase.is_ready():
-        return supabase.dashboard_summary()
+        return supabase.dashboard_summary(user_id=_authenticated_user_id(authorization))
     with SCAN_LOCK:
         jobs = list(SCAN_JOBS.values())
     completed = [job for job in jobs if job.get("status") == "completed"]
@@ -862,7 +937,7 @@ def dashboard_summary():
 
 
 @app.get("/scans")
-def scans(limit: int = Query(20, ge=1, le=100)):
+def scans(limit: int = Query(20, ge=1, le=100), authorization: str | None = Header(default=None)):
     if not supabase.enabled() or not supabase.is_ready():
         deep_rows = [_public_deep_scan(session) for session in _deep_scan_sessions(limit=limit)]
         with SCAN_LOCK:
@@ -881,7 +956,7 @@ def scans(limit: int = Query(20, ge=1, le=100)):
             reverse=True,
         )[:limit]
 
-    return supabase.list_scans(limit=limit)
+    return supabase.list_scans(limit=limit, user_id=_authenticated_user_id(authorization))
 
 
 @app.get("/findings")
@@ -894,6 +969,7 @@ def findings(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=50),
     limit: int | None = Query(None, ge=1, le=200),
+    authorization: str | None = Header(default=None),
 ):
     effective_size = limit or page_size
     skip = 0 if limit else (page - 1) * effective_size
@@ -953,6 +1029,7 @@ def findings(
             search=search,
             page=page,
             page_size=effective_size,
+            user_id=_authenticated_user_id(authorization),
         )
     combined = url_rows
     total = url_total
@@ -1080,9 +1157,9 @@ async def micro_ssl(req: ScanRequest):
 # ── POST /scan ─────────────────────────────────────────────────────
 
 @app.post("/scan")
-async def scan(req: ScanRequest):
+async def scan(req: ScanRequest, authorization: str | None = Header(default=None)):
     """Start a scan. Poll /scan/status/{scan_id} for progress and download."""
-    return await scan_start(req)
+    return await scan_start(req, authorization)
 
 
 # ── POST /scan/download ────────────────────────────────────────────
