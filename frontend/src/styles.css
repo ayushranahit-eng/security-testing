@@ -682,6 +682,26 @@ h2 {
   min-height: 178px;
 }
 
+/* Completed state — command panel */
+.deep-command-completed-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: #e6f9f0;
+  border: 1px solid #4caf82;
+  color: #1a5c38;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.deep-command-completed-notice svg {
+  flex-shrink: 0;
+  color: #2e9e60;
+  margin-top: 2px;
+}
+
 .deep-session-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1415,6 +1435,45 @@ h2 {
   opacity: 0.48;
 }
 
+.pagination-pages {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.page-number-btn {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 140ms, border-color 140ms, color 140ms;
+}
+
+.page-number-btn:hover:not(:disabled) {
+  background: #f0f4f7;
+  border-color: #b0bec5;
+}
+
+.page-number-btn.active {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+  font-weight: 700;
+  cursor: default;
+}
+
+.page-number-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
 .vulnerability-row-wrap.critical .severity-badge,
 .vulnerability-row-wrap.high .severity-badge {
   color: var(--red);
@@ -1762,6 +1821,38 @@ label {
 
 .live-panel {
   margin-bottom: 16px;
+}
+
+.live-panel-completed {
+  border-color: #4caf82;
+  box-shadow: 0 0 0 1px #4caf82;
+}
+
+.live-panel-completed .panel-title strong {
+  color: #1a5c38;
+}
+
+.live-panel-completed .progress-track div {
+  background: #2e9e60;
+}
+
+.scan-completed-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: #e6f9f0;
+  border: 1px solid #4caf82;
+  color: #1a5c38;
+  font-size: 13.5px;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.scan-completed-notice svg {
+  flex-shrink: 0;
+  color: #2e9e60;
 }
 
 .progress-track {

@@ -328,11 +328,11 @@ def create_scan(scan_id: str, target_url: str, config: dict[str, Any], user_id: 
         _scan_id_cache[scan_id] = created[0]["id"]
 
 
-def create_deep_scan(scan_id: str, website_url: str, commands: dict[str, str]) -> None:
+def create_deep_scan(scan_id: str, website_url: str, commands: dict[str, str], user_id: str | None = None) -> None:
     now = utcnow()
     row = {
         "scan_id": scan_id,
-        "user_id": default_user_id(),
+        "user_id": user_id or default_user_id(),
         "scan_type": "deep_scan",
         "status": "processing",
         "target_url": website_url or None,
@@ -551,7 +551,7 @@ def list_vulnerabilities(
     scan_type: str | None = None,
     search: str | None = None,
     page: int = 1,
-    page_size: int = 20,
+    page_size: int = 10,
     user_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     query = {

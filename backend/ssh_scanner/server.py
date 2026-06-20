@@ -91,6 +91,18 @@ def supabase_ready() -> bool:
         return False
 
 
+def authenticated_user_id(authorization: str | None) -> str | None:
+    if supabase is None or not supabase.auth_enabled():
+        return None
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    user = supabase.user_from_access_token(token.strip())
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    return str(user["id"])
+
+
 def deep_scan_collection():
     return None
 
@@ -407,7 +419,10 @@ def versioned_install_script(version: str, request: Request) -> PlainTextRespons
 
 
 @app.post("/api/scans")
-async def create_scan(request: Request) -> JSONResponse:
+async def create_scan(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
     payload = {}
     try:
         payload = await request.json()
@@ -421,7 +436,7 @@ async def create_scan(request: Request) -> JSONResponse:
     website_url = str(payload.get("website_url") or payload.get("target_url") or "").strip()
     commands = build_scan_commands(base_url, scan_id, website_url)
     if supabase_ready():
-        supabase.create_deep_scan(scan_id, website_url, commands)
+        supabase.create_deep_scan(scan_id, website_url, commands, user_id=authenticated_user_id(authorization))
     session = {
         "id": scan_id,
         "website_url": website_url,

@@ -491,7 +491,7 @@ function App({ onLogout }) {
         ) : activeView === "monitoring" ? (
           <ActiveMonitoring openPricing={() => setActiveView("pricing")} />
         ) : activeView === "deep-scan" ? (
-          <DeepScan openPricing={() => setActiveView("pricing")} />
+          <DeepScan openPricing={() => setActiveView("pricing")} recentScans={recentScans} onRefreshScans={loadRecentScans} />
         ) : activeView === "vulnerabilities" ? (
           <VulnerabilitiesPage />
         ) : (
@@ -593,7 +593,7 @@ function Sidebar({ activeView, setActiveView, account, onLogout }) {
   );
 }
 
-function DeepScan() {
+function DeepScan({ recentScans, onRefreshScans }) {
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [scanSession, setScanSession] = useState(null);
   const [deepReport, setDeepReport] = useState(null);
@@ -607,6 +607,7 @@ function DeepScan() {
   useEffect(() => {
     const savedScanId = localStorage.getItem(DEEP_SCAN_STORAGE_KEY);
     if (savedScanId) startDeepPolling(savedScanId);
+    if (onRefreshScans) onRefreshScans();
     return () => {
       if (deepPollRef.current) window.clearInterval(deepPollRef.current);
     };
@@ -627,6 +628,7 @@ function DeepScan() {
   const codebase = report?.codebase || {};
   const findings = report?.findings || [];
   const reportMeta = report || reportSummary;
+  const isCompleted = ["completed", "failed"].includes(String(scanSession?.status || "").toLowerCase());
 
   async function createDeepScan(event) {
     event.preventDefault();
@@ -637,7 +639,7 @@ function DeepScan() {
     try {
       const response = await fetch(apiUrl("/api/deep-scan/api/scans"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ website_url: normalizeUrl(websiteUrl) }),
       });
       if (!response.ok) throw new Error(await response.text());
@@ -646,6 +648,7 @@ function DeepScan() {
       localStorage.setItem(DEEP_SCAN_STORAGE_KEY, payload.scan.id);
       setCommandMode(payload.scan?.commands?.linux ? "linux" : Object.keys(payload.scan?.commands || {})[0] || "linux");
       startDeepPolling(payload.scan.id);
+      if (onRefreshScans) onRefreshScans();
     } catch (scanError) {
       setError("Could not prepare the Deep Scan command. Confirm backend_new is running and the deep-scan routes are mounted.");
     } finally {
@@ -671,6 +674,7 @@ function DeepScan() {
       if (["completed", "failed"].includes(String(payload.status || "").toLowerCase()) && deepPollRef.current) {
         window.clearInterval(deepPollRef.current);
         deepPollRef.current = null;
+        if (onRefreshScans) onRefreshScans();
       }
     } catch (pollError) {
       setError("Could not refresh Deep Scan status. The session may no longer be available.");
@@ -760,12 +764,28 @@ function DeepScan() {
             <div className="panel-title horizontal">
               <div>
                 <strong>Run command</strong>
-                <span>Open the project root on the server, run this command, then keep this page open for results.</span>
+                <span>
+                  {isCompleted
+                    ? "This scan has already completed. Create a new command below to run another scan."
+                    : "Open the project root on the server, run this command, then keep this page open for results."}
+                </span>
               </div>
-              <button className="secondary-action" type="button" onClick={copyCommand}>
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={copyCommand}
+                disabled={isCompleted}
+                title={isCompleted ? "Scan already completed — prepare a new command to scan again" : "Copy command"}
+              >
                 <Copy size={17} /> {copied ? "Copied" : "Copy"}
               </button>
             </div>
+            {isCompleted ? (
+              <div className="deep-command-completed-notice">
+                <CheckCircle2 size={18} />
+                <span>Scan completed. To run another scan, enter a URL in the form above and click <strong>Prepare command</strong>.</span>
+              </div>
+            ) : null}
             <div className="deep-command-tabs">
               {commandModes.map(([key, label]) => (
                 <button className={commandMode === key ? "active" : ""} type="button" key={key} onClick={() => setCommandMode(key)}>
@@ -778,7 +798,13 @@ function DeepScan() {
             {commandPresentation.fallback ? (
               <details className="deep-command-fallback">
                 <summary>Alternative download method</summary>
-                <button className="secondary-action" type="button" onClick={copyFallbackCommand}>
+                <button
+                  className="secondary-action"
+                  type="button"
+                  onClick={copyFallbackCommand}
+                  disabled={isCompleted}
+                  title={isCompleted ? "Scan already completed" : "Copy alternative command"}
+                >
                   <Copy size={17} /> {copiedFallback ? "Copied" : "Copy alternative"}
                 </button>
                 <pre className="monitor-script deep-command-output"><code>{commandPresentation.fallback}</code></pre>
@@ -838,6 +864,16 @@ function DeepScan() {
 
         {report ? <DeepScanReport report={report} codebase={codebase} findings={findings} /> : null}
 
+        {(recentScans || []).filter((s) => s.scan_type === "deep_scan" || s.scanned_from === "Deep Scan" || s.scan_source === "deep_scan").length > 0 ? (
+          <section className="panel recent-scans-panel">
+            <div className="panel-title">
+              <strong>Recent deep scans</strong>
+              <span>Latest completed deep scans</span>
+            </div>
+            <DeepRecentScansList scans={(recentScans || []).filter((s) => s.scan_type === "deep_scan" || s.scanned_from === "Deep Scan" || s.scan_source === "deep_scan")} />
+          </section>
+        ) : null}
+
       </section>
     </section>
   );
@@ -857,6 +893,30 @@ function formatDateTime(value) {
         minute: "2-digit",
         second: "2-digit",
       });
+}
+
+function DeepRecentScansList({ scans }) {
+  if (!scans?.length) return null;
+  return (
+    <div className="recent-scan-list">
+      {scans.slice(0, 6).map((scan) => {
+        const url = scan.url || scan.target || scan.website_url || "";
+        const domain = scan.domain || domainFromUrl(url || "Unknown domain");
+        const status = String(scan.status || "unknown");
+        const findings = scan.summary?.findings ?? scan.summary?.total ?? scan.findings_found ?? 0;
+        const createdAt = scan.created_at ? formatDateTime(scan.created_at) : "No timestamp";
+        return (
+          <article className="recent-scan-row" key={scan.scan_id || scan.id || `${domain}-${createdAt}`}>
+            <div>
+              <strong>{domain}</strong>
+              <span>Deep Scan — {status} — {findings} findings</span>
+              <small>{createdAt}</small>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
 }
 
 function DeepScanReport({ report, codebase, findings }) {
@@ -1032,7 +1092,7 @@ function VulnerabilitiesPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const pageSize = 20;
+  const pageSize = 10;
   const [filters, setFilters] = useState({
     search: "",
     severity: "all",
@@ -1061,7 +1121,7 @@ function VulnerabilitiesPage() {
       setFindings(items);
       setTotalFindings(Array.isArray(payload) ? items.length : Number(payload.total || 0));
     } catch {
-      setError("Could not load vulnerabilities. Confirm the backend is running and Supabase is connected.");
+      setError("Could not load vulnerabilities. Confirm the backend is running.");
     } finally {
       setLoading(false);
     }
@@ -1205,14 +1265,37 @@ function VulnerabilitiesPage() {
           )}
         </div>
         <div className="vulnerability-pagination">
-          <span>{pageStart}-{pageEnd} of {totalFindings} vulnerabilities</span>
-          <div>
-            <button className="secondary-action" type="button" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+          <span>{pageStart}–{pageEnd} of {totalFindings} vulnerabilities</span>
+          <div className="pagination-pages">
+            <button className="secondary-action" type="button" disabled={page <= 1 || loading} onClick={() => setPage(1)} title="First page">
+              «
+            </button>
+            <button className="secondary-action" type="button" disabled={page <= 1 || loading} onClick={() => setPage((v) => Math.max(1, v - 1))}>
               Previous
             </button>
-            <strong>Page {page} of {totalPages}</strong>
-            <button className="secondary-action" type="button" disabled={page >= totalPages || loading} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>
+            {(() => {
+              const windowSize = 10;
+              const half = Math.floor(windowSize / 2);
+              let start = Math.max(1, page - half);
+              let end = Math.min(totalPages, start + windowSize - 1);
+              if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1);
+              return Array.from({ length: end - start + 1 }, (_, i) => start + i).map((p) => (
+                <button
+                  key={p}
+                  className={`page-number-btn${p === page ? " active" : ""}`}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setPage(p)}
+                >
+                  {p}
+                </button>
+              ));
+            })()}
+            <button className="secondary-action" type="button" disabled={page >= totalPages || loading} onClick={() => setPage((v) => Math.min(totalPages, v + 1))}>
               Next
+            </button>
+            <button className="secondary-action" type="button" disabled={page >= totalPages || loading} onClick={() => setPage(totalPages)} title="Last page">
+              »
             </button>
           </div>
         </div>
@@ -1422,14 +1505,14 @@ function Dashboard({ totals, history, dashboardSummary, recentScans, onScan, ope
         <StatCard label="Domains monitored" value={totals.domains} detail={`${totals.scans} scans stored`} icon={Globe2} />
         <StatCard label="All vulnerabilities" value={totals.vulnerabilities} detail={`${totals.byType?.url_scan || 0} URL / ${totals.byType?.deep_scan || 0} Deep scans`} icon={AlertTriangle} tone={totals.risk} />
         <StatCard label="Processing now" value={totals.processing || 0} detail={`${totals.failed || 0} failed scans stored`} icon={Activity} tone={totals.processing ? "Medium" : "Info"} />
-        <StatCard label="Current top risk" value={totals.risk} detail="From Supabase vulnerabilities" icon={ShieldCheck} tone={totals.risk} />
+        <StatCard label="Current top risk" value={totals.risk} detail="Based on stored findings" icon={ShieldCheck} tone={totals.risk} />
       </div>
 
       <div className="dashboard-stack">
         <section className="panel">
           <div className="panel-title">
             <strong>Severity breakdown</strong>
-            <span>Loaded from Supabase vulnerabilities</span>
+            <span>Based on stored vulnerability findings</span>
           </div>
           <div className="severity-grid">
             {Object.entries(totals.counts).map(([severity, count]) => (
@@ -1452,7 +1535,7 @@ function Dashboard({ totals, history, dashboardSummary, recentScans, onScan, ope
         <section className="panel">
           <div className="panel-title">
             <strong>Recent scans</strong>
-            <span>Latest Supabase scan records</span>
+            <span>Latest completed scan records</span>
           </div>
           <RecentScansList scans={recentScans || []} onScan={onScan} />
         </section>
@@ -1599,7 +1682,7 @@ function ScanView(props) {
       <section className="panel recent-scans-panel">
         <div className="panel-title">
           <strong>Recent scans</strong>
-          <span>Loaded from Supabase scan history</span>
+          <span>Loaded from scan history</span>
         </div>
         <RecentScansList scans={recentScans} onScan={onScan} />
       </section>
@@ -1637,7 +1720,7 @@ function LiveStatus({ liveStatus }) {
       : `${formatDuration(timing.estimated_remaining_seconds)} remaining`;
 
   return (
-    <section className="live-panel">
+    <section className={`live-panel${isCompleted ? " live-panel-completed" : ""}`}>
       <div className="panel-title horizontal">
         <div>
           <strong>{liveStatus.current_step || "Preparing scan"}</strong>
@@ -1645,6 +1728,12 @@ function LiveStatus({ liveStatus }) {
         </div>
         <Activity size={20} />
       </div>
+      {isCompleted ? (
+        <div className="scan-completed-notice">
+          <CheckCircle2 size={18} />
+          <span>Scan completed. Results are ready below.</span>
+        </div>
+      ) : null}
       <div className="progress-track">
         <div style={{ width: `${Math.max(4, Math.min(100, Number(progress.percent) || 8))}%` }} />
       </div>
@@ -1856,7 +1945,7 @@ function RecentScansList({ scans, onScan }) {
   return (
     <div className="history-empty">
       <strong>No recent scans stored yet.</strong>
-      <span>Run a scan after Supabase is connected and it will appear here.</span>
+      <span>Run a scan to see your history here.</span>
     </div>
   );
 }

@@ -967,7 +967,7 @@ def findings(
     scan_type: str | None = None,
     search: str | None = None,
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=50),
+    page_size: int = Query(10, ge=1, le=100),
     limit: int | None = Query(None, ge=1, le=200),
     authorization: str | None = Header(default=None),
 ):
